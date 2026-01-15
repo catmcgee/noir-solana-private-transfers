@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sol-purple: #9945FF;
+  --sol-green: #14F195;
+  --sol-dark: #0e1116;
+  --sol-card: #1a1f2e;
+  --sol-border: #2d3748;
+}
+
+body {
+  background-color: var(--sol-dark);
+  color: #e2e8f0;
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, var(--sol-purple), var(--sol-green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--sol-purple), var(--sol-green));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--sol-purple), #7c3aed);
+  transition: all 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #10b981, var(--sol-green));
+  transition: all 0.2s;
+}
+
+.btn-success:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+input {
+  background-color: var(--sol-dark);
+  border-color: var(--sol-border);
+  color: #e2e8f0;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--sol-purple);
+  box-shadow: 0 0 0 1px var(--sol-purple);
+}
+
+input::placeholder {
+  color: #64748b;
+}
