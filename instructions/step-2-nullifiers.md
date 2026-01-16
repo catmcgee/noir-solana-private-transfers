@@ -6,29 +6,45 @@ Add nullifier tracking to prevent double-spending without revealing which deposi
 
 ## The Double-Spend Problem
 
-If someone deposits 1 SOL, how do we prevent them from withdrawing it twice?
+In your escrow, preventing double-spend was easy - you closed the escrow account after the trade:
 
-In a normal system, you'd mark the deposit as "spent". But we can't do that here - if we mark "commitment X was spent", everyone knows that's the one being withdrawn. Privacy gone.
+```rust
+// Escrow: account is closed, can't be used again
+close = maker  // Account closed, rent returned
+```
 
-## The Solution: Nullifiers
+But we can't do that here. If we mark "commitment X was spent", everyone knows which deposit was withdrawn.
 
-Here's how it works:
+We need a way to mark something as "spent" without revealing which commitment it corresponds to.
 
-1. When you deposit, you choose a random `nullifier`
-2. When you withdraw, you reveal the HASH of that nullifier - the `nullifier_hash`
+## Nullifiers
+
+1. When you deposit, you calculate a random `nullifier`
+2. When you withdraw, you reveal the hash of that nullifier - the `nullifier_hash`
 3. We track used `nullifier_hash` values
 
-**Key insight**: The SAME nullifier ALWAYS produces the SAME hash. So if you try to withdraw twice with the same deposit, you'll submit the same `nullifier_hash` twice, and we reject the second one.
+The same nullifier always produces the same hash. So if you try to withdraw twice with the same deposit, you'll submit the same `nullifier_hash` twice, and then the program will reject the second one.
 
-**Privacy preserved**: Observers can't link the `nullifier_hash` back to the original commitment. They're computed from different inputs:
+Observers can't link the `nullifier_hash` back to the original commitment. They're computed from different inputs:
+
 - `commitment = Hash(nullifier, secret, amount)`
 - `nullifier_hash = Hash(nullifier)`
 
-Without knowing the `nullifier`, you can't link these.
-
-## Update the Solana Program
+## Program updates
 
 ### 1. Add NullifierSet struct
+
+We need to store all used nullifier hashes. On Solana, we have a few options:
+
+- **Vec in account**: Simple, but limited by account size (10MB max)
+- **PDA per nullifier**: Unlimited, but more complex
+- **Merkle tree of nullifiers**: Do this in production! But we don't do that here
+
+We'll use `Vec` for simplicity - it supports 256 nullifiers.
+
+![image](./assets/nullifier_set_PDA.png)
+
+> 💡 **Solana Reminder**: `#[max_len(256)]` tells Anchor the maximum Vec size for space calculation. The account is allocated with this max size upfront. `256 * 32 bytes = 8KB` for nullifier storage.
 
 In `lib.rs`, find:
 
@@ -64,7 +80,11 @@ impl NullifierSet {
 }
 ```
 
-### 2. Add NullifierSet to Initialize accounts
+### 2. Add NullifierSet to initialize accounts
+
+The NullifierSet is a PDA derived from the pool - this ensures each pool has exactly one nullifier set.
+
+> 💡 **Solana Reminder**: `seeds = [b"nullifiers", pool.key().as_ref()]` - Deriving a PDA from seeds. Here we combine a string literal with the pool's address. This creates a unique, deterministic address.
 
 Find:
 
@@ -278,38 +298,31 @@ anchor build
 
 Let's trace through what happens:
 
-1. **Alice deposits** - the commitment goes on-chain
-2. **Later, Alice withdraws** - she submits a `nullifier_hash`
-3. **We check**: has this `nullifier_hash` been used before? No? Continue.
+1. **Alice deposits** - the commitment goes onchain
+2. **Later, Bob withdraws** - submits a `nullifier_hash`
+3. **We check**: has this `nullifier_hash` been used before
 4. **We mark** the `nullifier_hash` as used
-5. **Alice gets her funds**
+5. **Bob gets the funds**
 
-If Alice tries to withdraw again with the same deposit note, she'll submit the SAME `nullifier_hash`, and we reject it.
+If Bob tries to withdraw again with the same deposit note, it'll submit the same `nullifier_hash` and is rejected.
 
-## Privacy Analysis
+![image](./assets/using_nullifier.png)
 
-| What observers see | Can they link them? |
-|-------------------|---------------------|
-| Deposit: `commitment = 0x7a3b...` | No - different hash inputs |
-| Withdraw: `nullifier_hash = 0x9c2f...` | |
+## Next
 
-Without knowing the original `nullifier`, there's no way to connect the commitment and nullifier_hash.
+Right now, anyone could submit any `nullifier_hash` and withdraw! We're not actually verifying that the person knows a valid deposit.
 
-## The Next Problem
-
-Right now, ANYONE could submit ANY random `nullifier_hash` and withdraw! We're not actually verifying that the person knows a valid deposit.
-
-We need to prove: "I know a commitment in this pool, and this `nullifier_hash` corresponds to it."
+We need to prove that they know a commitment, and that the nullifier hash corresponds to it.
 
 That's where Merkle trees and ZK proofs come in.
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| Nullifier | Random secret chosen at deposit time |
-| Nullifier Hash | `Hash(nullifier)` - revealed at withdrawal |
-| Double-spend Prevention | Same nullifier → same hash → rejected |
+| Concept                 | Description                                |
+| ----------------------- | ------------------------------------------ |
+| Nullifier               | Random secret chosen at deposit time       |
+| Nullifier Hash          | `Hash(nullifier)` - revealed at withdrawal |
+| Double-spend Prevention | Same nullifier → same hash → rejected      |
 
 ## Next Step
 

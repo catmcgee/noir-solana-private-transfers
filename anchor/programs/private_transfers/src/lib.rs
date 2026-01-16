@@ -36,7 +36,7 @@ pub mod private_transfers {
         Ok(())
     }
 
-    /// Client computes commitment and new_root off-chain.
+    /// Client computes commitment and new_root offchain.
     /// Invalid roots will cause withdrawal proofs to fail.
     pub fn deposit(
         ctx: Context<Deposit>,

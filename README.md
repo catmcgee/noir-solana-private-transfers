@@ -1,6 +1,6 @@
 # Private Transfers on Solana
 
-Privacy-preserving SOL transfers using Noir ZK circuits and on-chain Groth16 verification via Sunspot.
+Privacy-preserving SOL transfers using Noir ZK circuits and onchain Groth16 verification via Sunspot.
 
 This is for demo purposes only to explain zero-knowledge proofs on Solana. It is not intended to be used or deployed to production.
 
@@ -8,7 +8,7 @@ This is for demo purposes only to explain zero-knowledge proofs on Solana. It is
 
 1. **Deposit**: User deposits SOL into a shared pool. A commitment `hash(nullifier, secret, amount)` is added to a Merkle tree.
 
-2. **Withdraw**: User generates a ZK proof showing they know a valid commitment without revealing which one. The proof is verified on-chain via Sunspot.
+2. **Withdraw**: User generates a ZK proof showing they know a valid commitment without revealing which one. The proof is verified onchain via Sunspot.
 
 3. **Privacy**: The link between deposit and withdrawal is broken. Only the amount is visible (variable amounts trade privacy for flexibility).
 
@@ -165,7 +165,7 @@ npx ts-mocha -p ./tsconfig.json -t 1000000 tests/e2e.ts
 - **NullifierSet**: Tracks used nullifiers
 - **Vault**: Holds deposited SOL
 
-Withdrawal verifies the ZK proof via CPI to Sunspot's on-chain verifier.
+Withdrawal verifies the ZK proof via CPI to Sunspot's onchain verifier.
 
 ## Limitations
 

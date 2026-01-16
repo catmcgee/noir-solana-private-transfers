@@ -13,8 +13,8 @@
         "Deposit funds into the pool",
         "",
         "The client computes:",
-        "1. commitment = Poseidon(nullifier, secret, amount) off-chain",
-        "2. new_root by inserting commitment into the Merkle tree off-chain",
+        "1. commitment = Poseidon(nullifier, secret, amount) offchain",
+        "2. new_root by inserting commitment into the Merkle tree offchain",
         "",
         "Security: The ZK proof during withdrawal verifies the commitment is in the tree.",
         "If the client submits an invalid root, withdrawals will fail proof verification."
@@ -496,7 +496,7 @@
     {
       "name": "Pool",
       "docs": [
-        "Pool state - stores root history only (no on-chain Merkle tree computation)"
+        "Pool state - stores root history only (no onchain Merkle tree computation)"
       ],
       "type": {
         "kind": "struct",

@@ -1,18 +1,27 @@
-# Step 5: On-Chain Verification with Sunspot
+# Step 5: onchain Verification with Sunspot
 
 ## Goal
 
-Deploy the Sunspot verifier and add CPI (Cross-Program Invocation) to verify ZK proofs on-chain.
+Deploy the Sunspot verifier and add CPI (Cross-Program Invocation) to verify ZK proofs onchain.
+
+## CPI Refresher
+
+Here we do a cross-program invocation to call the **Sunspot Verifier Program**:
+
+```rust
+// Our CPI to verifier
+invoke(&verifier_instruction, &[verifier_account])?;
+```
+
+The verifier is just a Solana program.
 
 ## The Verification Flow
 
-We have a ZK proof that proves everything we need. But how do we verify it on Solana?
+If the proof is invalid, the verifier returns an error and our whole transaction fails (it's atomic, like all Solana transactions). If valid, we proceed with the withdrawal.
 
-Sunspot generates a Solana program specifically for verifying our proofs. We deploy this verifier, then our main program calls it via CPI.
+![image](./assets/cpi.png)
 
-If the proof is invalid, the verifier returns an error and our whole transaction fails. If valid, we proceed with the withdrawal.
-
-## Deploy the Verifier
+## Deploy the verifier
 
 ### Generate and Deploy
 
@@ -32,12 +41,13 @@ anchor deploy --provider.cluster devnet
 **Important**: Copy the verifier program ID from the output!
 
 Example output:
+
 ```
 Deploying program "verifier"...
 Program Id: CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ
 ```
 
-## Update the Solana Program
+## Back to our original program
 
 Now add CPI (Cross-Program Invocation) to call the verifier from your main program.
 
@@ -171,6 +181,10 @@ Replace with:
 
 ### 5. Add ZK proof verification via CPI
 
+This is the core of privacy - we verify the ZK proof onchain.
+
+> 💡 **Solana Reminder**: We use `invoke()` here, not `invoke_signed()`, because we're not signing on behalf of a PDA, we're just calling another program. The verifier doesn't need any account signatures; it just validates the proof bytes. Later, when we transfer from the vault PDA, we'll need `invoke_signed()`.
+
 Find:
 
 ```rust
@@ -197,7 +211,7 @@ Replace with:
         invoke(
             &Instruction {
                 program_id: ctx.accounts.verifier_program.key(),
-                accounts: vec![],
+                accounts: vec![],  // Verifier needs no accounts, just proof data
                 data: instruction_data,
             },
             &[ctx.accounts.verifier_program.to_account_info()],
@@ -237,7 +251,7 @@ anchor deploy --provider.cluster devnet
 
 ## Understanding the Verification Flow
 
-1. User generates a ZK proof off-chain using the proving key
+1. User generates a ZK proof offchain using the proving key
 2. They submit a transaction with: `proof` (256 bytes) + `nullifier_hash` + `root` + `recipient` + `amount`
 3. Our program does the checks: nullifier unused, root is known
 4. We call the Sunspot verifier via CPI
@@ -245,9 +259,29 @@ anchor deploy --provider.cluster devnet
 6. If invalid: error, transaction fails
 7. If valid: we continue, mark nullifier used, transfer funds
 
+## Inside the verifier
+
+You can look at this yourself, but this is totally out of scope for the bootcamp and for most privacy products you might want to build.
+
+The Sunspot verifier is basically Groth16 as code. It performs **elliptic curve pairings** on BN254. Without diving into the math, here's the intuition:
+
+```
+Verifier receives:
+  - Proof: (A, B, C) - three curve points
+  - Public inputs: (root, nullifier_hash, recipient, amount)
+
+Verifier computes:
+  e(A, B) == e(α, β) × e(public_inputs, γ) × e(C, δ)
+
+  where e() is a "pairing" function and α,β,γ,δ are from the verification key
+```
+
+If this equation holds, the prover knew valid private inputs. If not, they're lying.
+
 ## Public Inputs Format
 
 The CPI data format is:
+
 ```
 instruction_data = proof_bytes || public_inputs_bytes
 ```
@@ -256,6 +290,7 @@ instruction_data = proof_bytes || public_inputs_bytes
 - Public inputs: 12-byte header + 4×32-byte values = 140 bytes
 
 **Critical**: The public inputs ORDER must match exactly what the circuit expects:
+
 1. root
 2. nullifier_hash
 3. recipient
@@ -263,14 +298,19 @@ instruction_data = proof_bytes || public_inputs_bytes
 
 ## Compute Units
 
-ZK verification is expensive. It uses about **1.4 million compute units**. The default limit is 200K, so the frontend needs to request more via `ComputeBudgetProgram`.
+ZK verification is expensive. It uses about **1.4 million compute units**.
+
+> 💡 **Solana Reminder**: Every Solana transaction has a compute unit limit (default 200K). Complex operations like ZK verification need more. You request extra compute units by adding a `ComputeBudgetProgram` instruction before your main instruction
 
 ```typescript
 // Frontend must request extra compute units
-const computeBudgetData = new Uint8Array(5);
-computeBudgetData[0] = 2;  // SetComputeUnitLimit instruction
-new DataView(computeBudgetData.buffer).setUint32(1, 1_400_000, true);
+import { ComputeBudgetProgram } from "@solana/web3.js";
+
+// Add this instruction FIRST in your transaction
+ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
 ```
+
+The extra compute costs more in fees, but it's still cheap (~$0.02 per withdrawal). Solana is awesome.
 
 ### Test
 
@@ -283,19 +323,20 @@ anchor test --provider.cluster devnet
 You just verified a zero-knowledge proof on Solana!
 
 The user proved they know a valid deposit without revealing which one. The blockchain sees:
+
 - **Deposit**: commitment `0x7a3b...` at index 42
 - **Withdraw**: nullifier_hash `0x9c2f...` to recipient Bob
 
-These two pieces of information CANNOT be linked without knowing the original nullifier. That's privacy.
+These two pieces of information can't be linked without knowing the original nullifier.
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| CPI | Cross-Program Invocation - calling another program |
-| Proof Format | 256 bytes (Groth16) + 140 bytes (public inputs) |
-| Input Order | Must match circuit exactly |
-| Compute Units | ~1.4M needed for verification |
+| Concept       | Description                                        |
+| ------------- | -------------------------------------------------- |
+| CPI           | Cross-Program Invocation - calling another program |
+| Proof Format  | 256 bytes (Groth16) + 140 bytes (public inputs)    |
+| Input Order   | Must match circuit exactly                         |
+| Compute Units | ~1.4M needed for verification                      |
 
 ## Next Step
 
