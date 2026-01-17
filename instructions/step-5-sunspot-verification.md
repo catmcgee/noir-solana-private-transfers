@@ -58,7 +58,6 @@ In `lib.rs`, find:
 ```rust
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::invoke;
-use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 ```
@@ -69,7 +68,6 @@ Replace with:
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
-use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 
