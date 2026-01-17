@@ -1,18 +1,27 @@
-# Step 5: On-Chain Verification with Sunspot
+# Step 5: onchain Verification with Sunspot
 
 ## Goal
 
-Deploy the Sunspot verifier and add CPI (Cross-Program Invocation) to verify ZK proofs on-chain.
+Deploy the Sunspot verifier and add CPI (Cross-Program Invocation) to verify ZK proofs onchain.
+
+## CPI Refresher
+
+Here we do a cross-program invocation to call the **Sunspot Verifier Program**:
+
+```rust
+// Our CPI to verifier
+invoke(&verifier_instruction, &[verifier_account])?;
+```
+
+The verifier is just a Solana program.
 
 ## The Verification Flow
 
-We have a ZK proof that proves everything we need. But how do we verify it on Solana?
+If the proof is invalid, the verifier returns an error and our whole transaction fails (it's atomic, like all Solana transactions). If valid, we proceed with the withdrawal.
 
-Sunspot generates a Solana program specifically for verifying our proofs. We deploy this verifier, then our main program calls it via CPI.
+![image](./assets/cpi.png)
 
-If the proof is invalid, the verifier returns an error and our whole transaction fails. If valid, we proceed with the withdrawal.
-
-## Deploy the Verifier
+## Deploy the verifier
 
 ### Generate and Deploy
 
@@ -32,12 +41,13 @@ anchor deploy --provider.cluster devnet
 **Important**: Copy the verifier program ID from the output!
 
 Example output:
+
 ```
 Deploying program "verifier"...
 Program Id: CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ
 ```
 
-## Update the Solana Program
+## Back to our original program
 
 Now add CPI (Cross-Program Invocation) to call the verifier from your main program.
 
@@ -48,6 +58,7 @@ In `lib.rs`, find:
 ```rust
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::invoke;
+use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 ```
@@ -58,6 +69,7 @@ Replace with:
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
+use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 
@@ -80,32 +92,33 @@ Replace with:
 
 ```rust
 /// Encode public inputs in Gnark witness format
-/// Format: 12-byte header + 4x32-byte public inputs
+/// This is the binary format Sunspot verifier expects
 fn encode_public_inputs(
     root: &[u8; 32],
     nullifier_hash: &[u8; 32],
-    recipient: &Pubkey,
+    recipient: &Pubkey,      // Solana Pubkey is 32 bytes
     amount: u64,
 ) -> Vec<u8> {
     const NR_PUBLIC_INPUTS: u32 = 4;
-    let mut inputs = Vec::with_capacity(12 + 128);
+    let mut inputs = Vec::with_capacity(12 + 128);  // Pre-allocate for efficiency
 
-    // Header: num_public (4) | num_private (4) | vector_len (4)
-    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
-    inputs.extend_from_slice(&0u32.to_be_bytes());
-    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
+    // Gnark header format (12 bytes total)
+    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());  // 4 bytes
+    inputs.extend_from_slice(&0u32.to_be_bytes());              // 4 bytes (private=0)
+    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());  // 4 bytes
 
-    // Public inputs - ORDER MUST MATCH CIRCUIT!
-    inputs.extend_from_slice(root);
-    inputs.extend_from_slice(nullifier_hash);
-    inputs.extend_from_slice(recipient.as_ref());
+    // Public inputs - ORDER MUST MATCH NOIR CIRCUIT EXACTLY!
+    // If order is wrong, proof verification will fail
+    inputs.extend_from_slice(root);                  // 32 bytes
+    inputs.extend_from_slice(nullifier_hash);        // 32 bytes
+    inputs.extend_from_slice(recipient.as_ref());    // Pubkey -> &[u8; 32]
 
-    // Amount as 32-byte big-endian
+    // Amount as 32-byte big-endian (ZK field element format)
     let mut amount_bytes = [0u8; 32];
     amount_bytes[24..32].copy_from_slice(&amount.to_be_bytes());
     inputs.extend_from_slice(&amount_bytes);
 
-    inputs
+    inputs  // Total: 12 + 128 = 140 bytes
 }
 
 #[derive(Accounts)]
@@ -130,15 +143,20 @@ Find:
 Replace with:
 
 ```rust
-    /// CHECK: Validated in instruction logic
-    #[account(mut)]
+    /// CHECK: Validated in instruction logic (recipient param must match)
+    #[account(mut)]  // mut because we're transferring lamports TO it
     pub recipient: UncheckedAccount<'info>,
 
-    /// CHECK: Validated by constraint
-    #[account(constraint = verifier_program.key() == SUNSPOT_VERIFIER_ID @ PrivateTransfersError::InvalidVerifier)]
+    /// CHECK: Constraint validates this is the real Sunspot verifier
+    #[account(
+        constraint = verifier_program.key() == SUNSPOT_VERIFIER_ID
+            @ PrivateTransfersError::InvalidVerifier
+    )]
     pub verifier_program: UncheckedAccount<'info>,
+    // UncheckedAccount = we just need the AccountInfo for CPI
+    // No deserialization needed - verifier is an external program
 
-    pub system_program: Program<'info, System>,
+    pub system_program: Program<'info, System>,  // For SOL transfers
 }
 ```
 
@@ -171,6 +189,10 @@ Replace with:
 
 ### 5. Add ZK proof verification via CPI
 
+This is the core of privacy - we verify the ZK proof onchain.
+
+> 💡 **Solana Reminder**: We use `invoke()` here, not `invoke_signed()`, because we're not signing on behalf of a PDA, we're just calling another program. The verifier doesn't need any account signatures; it just validates the proof bytes. Later, when we transfer from the vault PDA, we'll need `invoke_signed()`.
+
 Find:
 
 ```rust
@@ -190,19 +212,23 @@ Replace with:
             PrivateTransfersError::InsufficientVaultBalance
         );
 
-        // VERIFY ZK PROOF via CPI to Sunspot verifier
+        // VERIFY ZK PROOF via CPI (Cross-Program Invocation)
+        // CPI = calling another Solana program from within our program
         let public_inputs = encode_public_inputs(&root, &nullifier_hash, &recipient, amount);
         let instruction_data = [proof.as_slice(), public_inputs.as_slice()].concat();
 
+        // invoke() is Solana's syscall for CPI
+        // Unlike invoke_signed(), we don't need PDA signing - just calling
         invoke(
             &Instruction {
-                program_id: ctx.accounts.verifier_program.key(),
-                accounts: vec![],
-                data: instruction_data,
+                program_id: ctx.accounts.verifier_program.key(),  // The Sunspot verifier
+                accounts: vec![],  // Verifier is stateless - no accounts needed
+                data: instruction_data,  // proof bytes + public inputs
             },
             &[ctx.accounts.verifier_program.to_account_info()],
         )?;
-        // If we reach here, the proof is valid!
+        // If invoke() returns Ok, the ZK proof is valid!
+        // If invalid, it returns Err and our whole tx fails (atomic)
 
         // Mark nullifier as used (prevents double-spend)
 ```
@@ -237,7 +263,7 @@ anchor deploy --provider.cluster devnet
 
 ## Understanding the Verification Flow
 
-1. User generates a ZK proof off-chain using the proving key
+1. User generates a ZK proof offchain using the proving key
 2. They submit a transaction with: `proof` (256 bytes) + `nullifier_hash` + `root` + `recipient` + `amount`
 3. Our program does the checks: nullifier unused, root is known
 4. We call the Sunspot verifier via CPI
@@ -245,9 +271,29 @@ anchor deploy --provider.cluster devnet
 6. If invalid: error, transaction fails
 7. If valid: we continue, mark nullifier used, transfer funds
 
+## Inside the verifier
+
+You can look at this yourself, but this is totally out of scope for the bootcamp and for most privacy products you might want to build.
+
+The Sunspot verifier is basically Groth16 as code. It performs **elliptic curve pairings** on BN254. Without diving into the math, here's the intuition:
+
+```
+Verifier receives:
+  - Proof: (A, B, C) - three curve points
+  - Public inputs: (root, nullifier_hash, recipient, amount)
+
+Verifier computes:
+  e(A, B) == e(α, β) × e(public_inputs, γ) × e(C, δ)
+
+  where e() is a "pairing" function and α,β,γ,δ are from the verification key
+```
+
+If this equation holds, the prover knew valid private inputs. If not, they're lying.
+
 ## Public Inputs Format
 
 The CPI data format is:
+
 ```
 instruction_data = proof_bytes || public_inputs_bytes
 ```
@@ -256,6 +302,7 @@ instruction_data = proof_bytes || public_inputs_bytes
 - Public inputs: 12-byte header + 4×32-byte values = 140 bytes
 
 **Critical**: The public inputs ORDER must match exactly what the circuit expects:
+
 1. root
 2. nullifier_hash
 3. recipient
@@ -263,14 +310,19 @@ instruction_data = proof_bytes || public_inputs_bytes
 
 ## Compute Units
 
-ZK verification is expensive. It uses about **1.4 million compute units**. The default limit is 200K, so the frontend needs to request more via `ComputeBudgetProgram`.
+ZK verification is expensive. It uses about **1.4 million compute units**.
+
+> 💡 **Solana Reminder**: Every Solana transaction has a compute unit limit (default 200K). Complex operations like ZK verification need more. You request extra compute units by adding a `ComputeBudgetProgram` instruction before your main instruction
 
 ```typescript
 // Frontend must request extra compute units
-const computeBudgetData = new Uint8Array(5);
-computeBudgetData[0] = 2;  // SetComputeUnitLimit instruction
-new DataView(computeBudgetData.buffer).setUint32(1, 1_400_000, true);
+import { ComputeBudgetProgram } from "@solana/web3.js";
+
+// Add this instruction FIRST in your transaction
+ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
 ```
+
+The extra compute costs more in fees, but it's still cheap (~$0.02 per withdrawal). Solana is awesome.
 
 ### Test
 
@@ -283,19 +335,20 @@ anchor test --provider.cluster devnet
 You just verified a zero-knowledge proof on Solana!
 
 The user proved they know a valid deposit without revealing which one. The blockchain sees:
+
 - **Deposit**: commitment `0x7a3b...` at index 42
 - **Withdraw**: nullifier_hash `0x9c2f...` to recipient Bob
 
-These two pieces of information CANNOT be linked without knowing the original nullifier. That's privacy.
+These two pieces of information can't be linked without knowing the original nullifier.
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| CPI | Cross-Program Invocation - calling another program |
-| Proof Format | 256 bytes (Groth16) + 140 bytes (public inputs) |
-| Input Order | Must match circuit exactly |
-| Compute Units | ~1.4M needed for verification |
+| Concept       | Description                                        |
+| ------------- | -------------------------------------------------- |
+| CPI           | Cross-Program Invocation - calling another program |
+| Proof Format  | 256 bytes (Groth16) + 140 bytes (public inputs)    |
+| Input Order   | Must match circuit exactly                         |
+| Compute Units | ~1.4M needed for verification                      |
 
 ## Next Step
 

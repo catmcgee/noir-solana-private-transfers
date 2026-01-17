@@ -4,14 +4,54 @@
 
 Understand the full withdrawal circuit and generate Sunspot proving/verification keys.
 
-## The Final Piece
+## Zero knowledge LFG!
 
 This is where everything comes together. We have:
+
 - **Commitments** that hide deposit details
 - **Nullifiers** that prevent double-spending
 - **Merkle trees** that prove membership
 
-But the Merkle proof reveals which commitment is ours. The solution: wrap everything in a **zero-knowledge proof**.
+But the Merkle proof reveals which commitment is ours. So let's wrap everything in a **zero-knowledge proof**.
+
+## Groth16 on Solana
+
+Solana doesn't have native ZK verification, so we need to pick a proof system:
+
+| Proof System | Proof Size | Verification Cost | Trusted Setup?    |
+| ------------ | ---------- | ----------------- | ----------------- |
+| **Groth16**  | 256 bytes  | ~1.4M CU          | Yes (per-circuit) |
+| PLONK        | ~500 bytes | ~2M CU            | Universal         |
+| STARKs       | ~50KB      | Too expensive     | No                |
+
+**Groth16** fits Solana best:
+
+- **Smallest proofs** (256 bytes) - need this for Solana's 1232-byte tx limit
+- **Fastest verification** - fits inside Solana's compute budget
+- **Sunspot support** - has good tooling, is widely used across blockchain
+
+### What is Groth16?
+
+Groth16 is a **zk-SNARK** (Zero-Knowledge Succinct Non-Interactive Argument of Knowledge):
+
+- **Zero-Knowledge**: Verifier learns nothing about private inputs
+- **Succinct**: Proof is tiny (256 bytes)
+- **Non-Interactive**: No back-and-forth between prover and verifier, single proof submitted
+- **Argument of Knowledge**: Prover must actually know the private inputs
+
+The 256-byte proof consists of three elliptic curve points on BN254:
+
+- **A** (G1 point): 64 bytes
+- **B** (G2 point): 128 bytes
+- **C** (G1 point): 64 bytes
+
+And that is all we will learn about ZK in this tutorial - it's complex math from here that thankfully, because of Noir, we don't need to know!
+
+### The Trusted Setup Trade-off
+
+Groth16 requires a **trusted setup** - a one-time ceremony that generates the proving/verification keys. If the setup is compromised, fake proofs could be created.
+
+For this tutorial, we generate keys locally (fine for learning). Production systems use multi-party computation (MPC) ceremonies where security holds if even one participant is honest.
 
 A ZK proof lets us prove a statement WITHOUT revealing the private data used to compute it.
 
@@ -25,7 +65,7 @@ Open `circuits/withdrawal/src/main.nr` to see the full circuit:
 
 ```noir
 fn main(
-    // PUBLIC - visible on-chain
+    // PUBLIC - visible onchain
     root: pub Field,
     nullifier_hash: pub Field,
     recipient: pub Field,
@@ -52,32 +92,53 @@ fn main(
 
 ### Public vs Private Inputs
 
-**PUBLIC inputs** - visible to everyone on-chain:
+**PUBLIC inputs** - visible to everyone onchain:
+
 - `root`: the Merkle tree root we're proving against
 - `nullifier_hash`: to prevent double-spending
 - `recipient`: who gets the funds (prevents front-running)
 - `amount`: how much to withdraw
 
 **PRIVATE inputs** - NEVER revealed, not even to the verifier:
-- `nullifier`: the secret value chosen during deposit
-- `secret`: another random value from deposit
-- `merkle_proof`: the 10 sibling hashes
-- `is_even`: which side of the tree at each level
+
+- `nullifier`: the secret value chosen during deposit (you saved this!)
+- `secret`: another random value from deposit (you saved this!)
+- `merkle_proof`: the 10 sibling hashes (computed by backend from tree data)
+- `is_even`: which side of the tree at each level (computed from your leaf index)
+
+You only need to save your `nullifier` and `secret`. The `merkle_proof` and `is_even` arrays are computed by the backend when you want to withdraw— - it uses your `leafIndex` and the tree state to figure these out.
+
+![image](./assets/zk_circuit.png)
 
 ### What the Circuit Proves
 
-| Assertion | What it proves |
-|-----------|----------------|
-| `commitment = Hash(nullifier, secret, amount)` | I know the deposit secrets |
-| `computed_hash == nullifier_hash` | My nullifier matches the public hash |
-| `computed_root == root` | My commitment is in the tree |
-| `recipient` is a public input | Proof is bound to this recipient |
+| Assertion                                      | What it proves                       |
+| ---------------------------------------------- | ------------------------------------ |
+| `commitment = Hash(nullifier, secret, amount)` | I know the deposit secrets           |
+| `computed_hash == nullifier_hash`              | My nullifier matches the public hash |
+| `computed_root == root`                        | My commitment is in the tree         |
+| `recipient` is a public input                  | Proof is bound to this recipient     |
 
-If ALL assertions pass, the proof is valid. If ANY private input is wrong, the proof fails.
+If all assertions pass, the proof is valid. If any private input is wrong, the proof fails.
 
-**The magic**: the verifier is convinced of all this WITHOUT seeing the private inputs. That's zero-knowledge.
+### Install Nargo
 
-### Compile and Test
+Before we can compile circuits, we need to install **Nargo** - the Noir compiler and package manager.
+
+```bash
+# Install noirup (Noir version manager)
+curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+
+# Install the specific version we need (compatible with Sunspot)
+noirup -v 1.0.0-beta.13
+
+# Verify installation
+nargo --version
+```
+
+> 💡 **Why this version?** Sunspot requires a specific Noir version for compatibility. Using a different version may cause proof generation to fail.
+
+### Compile and test
 
 ```bash
 cd circuits/withdrawal
@@ -90,14 +151,45 @@ nargo test
 Now convert this Noir circuit into something we can verify on Solana.
 
 Sunspot:
+
 1. Converts Noir's ACIR format to Groth16-compatible format
 2. Generates proving keys (used client-side to make proofs)
-3. Generates verification keys (baked into the on-chain verifier)
-4. Creates a Solana program that can verify these proofs
+3. Generates verification keys (inside onchain verifier)
+4. Generates a Solana program that can verify these proofs
 
-Groth16 proofs are tiny - just 256 bytes - and cheap to verify on-chain.
+### Install Sunspot
 
-### Run Sunspot Commands
+Sunspot requires **Go 1.24+**. Check your version:
+
+```bash
+go version  # Should show 1.24 or higher
+```
+
+If you need to install Go, visit [go.dev/dl](https://go.dev/dl/).
+
+Now install Sunspot:
+
+```bash
+# Clone the Sunspot repository
+git clone https://github.com/reilabs/sunspot.git
+cd sunspot/go
+
+# Build the binary
+go build -o sunspot .
+
+# Move to your PATH (choose one)
+# Option 1: System-wide (requires sudo)
+sudo mv sunspot /usr/local/bin/
+
+# Option 2: User bin directory (no sudo needed)
+mkdir -p ~/bin && mv sunspot ~/bin/
+# Then add to your shell config: export PATH="$HOME/bin:$PATH"
+
+# Verify installation
+sunspot --help
+```
+
+### Run Sunspot commands
 
 ```bash
 cd circuits/withdrawal
@@ -114,38 +206,31 @@ sunspot setup --input target/withdrawal.ccs --pk target/withdrawal.pk --vk targe
 You now have two key files:
 
 **Proving key** (`withdrawal.pk`, ~2MB)
+
 - Used client-side
-- When a user wants to withdraw, their browser/app loads this key and generates a proof
-- Proof generation takes about 30 seconds
+- When a user wants to withdraw, the client loads this key and generates a proof
 
 **Verification key** (`withdrawal.vk`, ~1KB)
-- Gets baked into the on-chain verifier
-- Tiny but can verify any proof generated with the proving key
-- Verification is nearly instant
 
-The verification key is derived from the circuit. If you change the circuit, you need new keys.
+- Gets **compiled into a Solana program** by `sunspot deploy`
+- This creates the verifier program you deploy to Solana
+- Verification happens onchain via CPI
 
-## The Proof Format
+> The verification key doesn't go in your program's account data. Instead, Sunspot generates an entirely separate Solana program with the verification logic baked in. Your program calls this verifier via CPI.
 
-Groth16 proofs consist of three elliptic curve points:
-- **A**: 64 bytes
-- **B**: 128 bytes
-- **C**: 64 bytes
-- **Total**: 256 bytes
-
-This 256-byte proof convinces anyone that you know valid private inputs, without revealing what they are.
+The verification key is derived from the circuit. If you change the circuit, you need new keys and a new verifier program.
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| Public Inputs | Visible on-chain: root, nullifier_hash, recipient, amount |
-| Private Inputs | Never revealed: nullifier, secret, merkle_proof, is_even |
-| Proving Key | Client-side, ~2MB, ~30s to generate proof |
-| Verification Key | On-chain, ~1KB, milliseconds to verify |
-| Groth16 Proof | 256 bytes total |
+| Concept          | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| Public Inputs    | Visible onchain: root, nullifier_hash, recipient, amount |
+| Private Inputs   | Never revealed: nullifier, secret, merkle_proof, is_even |
+| Proving Key      | Client-side, ~2MB, ~30s to generate proof                |
+| Verification Key | onchain, ~1KB, milliseconds to verify                    |
+| Groth16 Proof    | 256 bytes total                                          |
 
-## Next Step
+## Next step
 
 Now we need to create the actual Solana verifier program and integrate it into our code.
 
