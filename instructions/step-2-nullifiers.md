@@ -56,25 +56,27 @@ In `lib.rs`, find:
 Replace with:
 
 ```rust
-#[account]
-#[derive(InitSpace)]
+#[account]                          // Marks this as a Solana account struct
+#[derive(InitSpace)]                // Auto-calculates account size for init
 pub struct NullifierSet {
-    pub pool: Pubkey,
-    #[max_len(256)]
-    pub nullifiers: Vec<[u8; 32]>,
+    pub pool: Pubkey,               // Reference to the pool this belongs to
+    #[max_len(256)]                 // Max 256 nullifiers (8KB storage)
+    pub nullifiers: Vec<[u8; 32]>,  // List of used nullifier hashes
 }
 
 impl NullifierSet {
+    // Check if a nullifier has already been spent
     pub fn is_nullifier_used(&self, nullifier_hash: &[u8; 32]) -> bool {
-        self.nullifiers.contains(nullifier_hash)
+        self.nullifiers.contains(nullifier_hash)  // O(n) scan - fine for 256 items
     }
 
+    // Mark a nullifier as spent (prevents double-withdraw)
     pub fn mark_nullifier_used(&mut self, nullifier_hash: [u8; 32]) -> Result<()> {
         require!(
-            self.nullifiers.len() < 256,
+            self.nullifiers.len() < 256,              // Check we have space
             PrivateTransfersError::NullifierSetFull
         );
-        self.nullifiers.push(nullifier_hash);
+        self.nullifiers.push(nullifier_hash);         // Add to the list
         Ok(())
     }
 }
@@ -102,13 +104,16 @@ Replace with:
     pub pool: Account<'info, Pool>,
 
     #[account(
-        init,
-        payer = authority,
-        space = 8 + NullifierSet::INIT_SPACE,
-        seeds = [b"nullifiers", pool.key().as_ref()],
-        bump
+        init,                                    // Creates new account
+        payer = authority,                       // Who pays rent
+        space = 8 + NullifierSet::INIT_SPACE,   // 8 = discriminator
+        seeds = [b"nullifiers", pool.key().as_ref()],  // PDA seeds
+        bump                                     // Anchor finds the bump
     )]
     pub nullifier_set: Account<'info, NullifierSet>,
+    // PDA = Program Derived Address
+    // seeds = [b"nullifiers", pool_address] makes this deterministic
+    // Anyone can derive this address, but only the program can sign
 
     /// CHECK: PDA validated by seeds
 ```
@@ -233,11 +238,11 @@ pub struct WithdrawEvent {
 Replace with:
 
 ```rust
+#[event]  // Anchor macro - emits events that indexers/explorers can read
 pub struct WithdrawEvent {
-    pub nullifier_hash: [u8; 32],
-    pub recipient: Pubkey,
-    pub amount: u64,
-    pub timestamp: i64,
+    pub nullifier_hash: [u8; 32],  // Unique identifier for this withdrawal
+    pub recipient: Pubkey,          // Solana address receiving funds
+    pub timestamp: i64,             // Unix timestamp from Solana Clock
 }
 ```
 
@@ -258,11 +263,11 @@ Find:
 Replace with:
 
 ```rust
+        // emit! logs to Solana program logs - indexers can parse these
         emit!(WithdrawEvent {
-            nullifier_hash,
-            recipient: ctx.accounts.recipient.key(),
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
+            nullifier_hash,                            // Links to anti-double-spend check
+            recipient: ctx.accounts.recipient.key(),   // .key() gets Pubkey from account
+            timestamp: Clock::get()?.unix_timestamp,   // Clock sysvar for current time
         });
 ```
 

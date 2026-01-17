@@ -204,15 +204,20 @@ pub struct Pool {
 Replace with:
 
 ```rust
+#[account]
+#[derive(InitSpace)]
 pub struct Pool {
-    pub authority: Pubkey,
-    pub total_deposits: u64,
-    pub next_leaf_index: u64,
-    pub current_root_index: u64,
-    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],
+    pub authority: Pubkey,              // Who initialized the pool
+    pub next_leaf_index: u64,           // Next available slot in Merkle tree
+    pub total_deposits: u64,            // Count of all deposits
+    pub current_root_index: u64,        // Points to newest root in ring buffer
+    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],  // Fixed-size array (not Vec!)
+    // Ring buffer pattern: new roots overwrite oldest ones
+    // Account size is fixed at creation - can't grow!
 }
 
 impl Pool {
+    // Check if a root is in our recent history
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
         self.roots.iter().any(|r| r == root)
     }
@@ -322,43 +327,33 @@ Find:
 pub struct DepositEvent {
     pub commitment: [u8; 32],
     pub leaf_index: u64,
-    pub amount: u64,
     pub timestamp: i64,
+    // new_root will be added in Step 3
 ```
 
 Replace with:
 
 ```rust
+#[event]  // Anchor event - gets emitted to program logs
 pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub amount: u64,
-    pub timestamp: i64,
-    pub new_root: [u8; 32],
+    pub commitment: [u8; 32],  // The deposit commitment hash
+    pub leaf_index: u64,       // Position in the Merkle tree
+    pub timestamp: i64,        // From Clock::get()?.unix_timestamp
+    pub new_root: [u8; 32],    // New Merkle root after this deposit
+    // Indexers watch these events to reconstruct the tree offchain
+}
 ```
 
 ### 8. Emit new_root in deposit event
 
-Find:
+Find the emit! block and update to include new_root:
 
 ```rust
         emit!(DepositEvent {
             commitment,
-            leaf_index: pool.next_leaf_index,
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-        });
-```
-
-Replace with:
-
-```rust
-        emit!(DepositEvent {
-            commitment,
-            leaf_index: pool.next_leaf_index,
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-            new_root,
+            leaf_index,                              // Set earlier in function
+            timestamp: Clock::get()?.unix_timestamp, // Solana Clock sysvar
+            new_root,                                // The updated Merkle root
         });
 ```
 

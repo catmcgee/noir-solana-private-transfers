@@ -121,6 +121,23 @@ You only need to save your `nullifier` and `secret`. The `merkle_proof` and `is_
 
 If all assertions pass, the proof is valid. If any private input is wrong, the proof fails.
 
+### Install Nargo
+
+Before we can compile circuits, we need to install **Nargo** - the Noir compiler and package manager.
+
+```bash
+# Install noirup (Noir version manager)
+curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+
+# Install the specific version we need (compatible with Sunspot)
+noirup -v 1.0.0-beta.13
+
+# Verify installation
+nargo --version
+```
+
+> 💡 **Why this version?** Sunspot requires a specific Noir version for compatibility. Using a different version may cause proof generation to fail.
+
 ### Compile and test
 
 ```bash
@@ -139,6 +156,38 @@ Sunspot:
 2. Generates proving keys (used client-side to make proofs)
 3. Generates verification keys (inside onchain verifier)
 4. Generates a Solana program that can verify these proofs
+
+### Install Sunspot
+
+Sunspot requires **Go 1.24+**. Check your version:
+
+```bash
+go version  # Should show 1.24 or higher
+```
+
+If you need to install Go, visit [go.dev/dl](https://go.dev/dl/).
+
+Now install Sunspot:
+
+```bash
+# Clone the Sunspot repository
+git clone https://github.com/reilabs/sunspot.git
+cd sunspot/go
+
+# Build the binary
+go build -o sunspot .
+
+# Move to your PATH (choose one)
+# Option 1: System-wide (requires sudo)
+sudo mv sunspot /usr/local/bin/
+
+# Option 2: User bin directory (no sudo needed)
+mkdir -p ~/bin && mv sunspot ~/bin/
+# Then add to your shell config: export PATH="$HOME/bin:$PATH"
+
+# Verify installation
+sunspot --help
+```
 
 ### Run Sunspot commands
 

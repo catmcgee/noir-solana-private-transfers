@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
+use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 
@@ -56,20 +57,14 @@ pub mod private_transfers {
             PrivateTransfersError::DepositTooSmall
         );
 
-        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
-            &ctx.accounts.depositor.key(),
-            &ctx.accounts.pool_vault.key(),
-            amount,
+        let cpi_context = CpiContext::new(
+            *ctx.accounts.system_program.key,
+            system_program::Transfer {
+                from: ctx.accounts.depositor.to_account_info(),
+                to: ctx.accounts.pool_vault.to_account_info(),
+            },
         );
-
-        invoke(
-            &transfer_ix,
-            &[
-                ctx.accounts.depositor.to_account_info(),
-                ctx.accounts.pool_vault.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-        )?;
+        system_program::transfer(cpi_context, amount)?;
 
         let leaf_index = pool.next_leaf_index;
         let new_root_index = ((pool.current_root_index + 1) % ROOT_HISTORY_SIZE as u64) as usize;
@@ -139,20 +134,17 @@ pub mod private_transfers {
 
         let pool_key = pool.key();
         let seeds = &[b"vault".as_ref(), pool_key.as_ref(), &[ctx.bumps.pool_vault]];
+        let signer_seeds = &[&seeds[..]];
 
-        anchor_lang::solana_program::program::invoke_signed(
-            &anchor_lang::solana_program::system_instruction::transfer(
-                &ctx.accounts.pool_vault.key(),
-                &ctx.accounts.recipient.key(),
-                amount,
-            ),
-            &[
-                ctx.accounts.pool_vault.to_account_info(),
-                ctx.accounts.recipient.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-            ],
-            &[seeds],
-        )?;
+        let cpi_context = CpiContext::new_with_signer(
+            *ctx.accounts.system_program.key,
+            system_program::Transfer {
+                from: ctx.accounts.pool_vault.to_account_info(),
+                to: ctx.accounts.recipient.to_account_info(),
+            },
+            signer_seeds,
+        );
+        system_program::transfer(cpi_context, amount)?;
 
         emit!(WithdrawEvent {
             nullifier_hash,
@@ -211,9 +203,8 @@ pub struct Initialize<'info> {
     )]
     pub nullifier_set: Account<'info, NullifierSet>,
 
-    /// CHECK: PDA validated by seeds
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
-    pub pool_vault: UncheckedAccount<'info>,
+    pub pool_vault: SystemAccount<'info>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -225,9 +216,8 @@ pub struct Deposit<'info> {
     #[account(mut, seeds = [b"pool"], bump)]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: PDA validated by seeds
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
-    pub pool_vault: UncheckedAccount<'info>,
+    pub pool_vault: SystemAccount<'info>,
 
     #[account(mut)]
     pub depositor: Signer<'info>,
@@ -242,9 +232,8 @@ pub struct Withdraw<'info> {
     #[account(mut, seeds = [b"nullifiers", pool.key().as_ref()], bump)]
     pub nullifier_set: Account<'info, NullifierSet>,
 
-    /// CHECK: PDA validated by seeds
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
-    pub pool_vault: UncheckedAccount<'info>,
+    pub pool_vault: SystemAccount<'info>,
 
     /// CHECK: Validated in instruction logic
     #[account(mut)]

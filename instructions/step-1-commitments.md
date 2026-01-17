@@ -189,10 +189,10 @@ Replace with:
 
 ```rust
 pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub amount: u64,
-    pub timestamp: i64,
+    pub commitment: [u8; 32],  // The hash hiding nullifier, secret, and amount
+    pub leaf_index: u64,       // Position in the Merkle tree (0, 1, 2, ...)
+    pub timestamp: i64,        // When the deposit occurred (Unix timestamp)
+    // new_root will be added in Step 3
 ```
 
 ### 4. Update the emit! in deposit function
@@ -216,15 +216,19 @@ Find:
 Replace with:
 
 ```rust
+        // Store the current leaf index before incrementing
+        let leaf_index = pool.next_leaf_index;
+
+        // Emit event with commitment instead of depositor address
         emit!(DepositEvent {
-            commitment,
-            leaf_index: pool.next_leaf_index,
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
+            commitment,                              // The hash - no identity revealed!
+            leaf_index,                              // Which slot in the tree
+            timestamp: Clock::get()?.unix_timestamp, // Current time
+            // new_root will be added in Step 3
         });
 
-        pool.next_leaf_index += 1;
-        pool.total_deposits += 1;
+        pool.next_leaf_index += 1;  // Move to next slot for future deposits
+        pool.total_deposits += 1;   // Track total number of deposits
 ```
 
 ### 5. Initialize next_leaf_index in initialize

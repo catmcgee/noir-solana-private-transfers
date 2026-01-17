@@ -90,32 +90,33 @@ Replace with:
 
 ```rust
 /// Encode public inputs in Gnark witness format
-/// Format: 12-byte header + 4x32-byte public inputs
+/// This is the binary format Sunspot verifier expects
 fn encode_public_inputs(
     root: &[u8; 32],
     nullifier_hash: &[u8; 32],
-    recipient: &Pubkey,
+    recipient: &Pubkey,      // Solana Pubkey is 32 bytes
     amount: u64,
 ) -> Vec<u8> {
     const NR_PUBLIC_INPUTS: u32 = 4;
-    let mut inputs = Vec::with_capacity(12 + 128);
+    let mut inputs = Vec::with_capacity(12 + 128);  // Pre-allocate for efficiency
 
-    // Header: num_public (4) | num_private (4) | vector_len (4)
-    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
-    inputs.extend_from_slice(&0u32.to_be_bytes());
-    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
+    // Gnark header format (12 bytes total)
+    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());  // 4 bytes
+    inputs.extend_from_slice(&0u32.to_be_bytes());              // 4 bytes (private=0)
+    inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());  // 4 bytes
 
-    // Public inputs - ORDER MUST MATCH CIRCUIT!
-    inputs.extend_from_slice(root);
-    inputs.extend_from_slice(nullifier_hash);
-    inputs.extend_from_slice(recipient.as_ref());
+    // Public inputs - ORDER MUST MATCH NOIR CIRCUIT EXACTLY!
+    // If order is wrong, proof verification will fail
+    inputs.extend_from_slice(root);                  // 32 bytes
+    inputs.extend_from_slice(nullifier_hash);        // 32 bytes
+    inputs.extend_from_slice(recipient.as_ref());    // Pubkey -> &[u8; 32]
 
-    // Amount as 32-byte big-endian
+    // Amount as 32-byte big-endian (ZK field element format)
     let mut amount_bytes = [0u8; 32];
     amount_bytes[24..32].copy_from_slice(&amount.to_be_bytes());
     inputs.extend_from_slice(&amount_bytes);
 
-    inputs
+    inputs  // Total: 12 + 128 = 140 bytes
 }
 
 #[derive(Accounts)]
@@ -140,15 +141,20 @@ Find:
 Replace with:
 
 ```rust
-    /// CHECK: Validated in instruction logic
-    #[account(mut)]
+    /// CHECK: Validated in instruction logic (recipient param must match)
+    #[account(mut)]  // mut because we're transferring lamports TO it
     pub recipient: UncheckedAccount<'info>,
 
-    /// CHECK: Validated by constraint
-    #[account(constraint = verifier_program.key() == SUNSPOT_VERIFIER_ID @ PrivateTransfersError::InvalidVerifier)]
+    /// CHECK: Constraint validates this is the real Sunspot verifier
+    #[account(
+        constraint = verifier_program.key() == SUNSPOT_VERIFIER_ID
+            @ PrivateTransfersError::InvalidVerifier
+    )]
     pub verifier_program: UncheckedAccount<'info>,
+    // UncheckedAccount = we just need the AccountInfo for CPI
+    // No deserialization needed - verifier is an external program
 
-    pub system_program: Program<'info, System>,
+    pub system_program: Program<'info, System>,  // For SOL transfers
 }
 ```
 
@@ -204,19 +210,23 @@ Replace with:
             PrivateTransfersError::InsufficientVaultBalance
         );
 
-        // VERIFY ZK PROOF via CPI to Sunspot verifier
+        // VERIFY ZK PROOF via CPI (Cross-Program Invocation)
+        // CPI = calling another Solana program from within our program
         let public_inputs = encode_public_inputs(&root, &nullifier_hash, &recipient, amount);
         let instruction_data = [proof.as_slice(), public_inputs.as_slice()].concat();
 
+        // invoke() is Solana's syscall for CPI
+        // Unlike invoke_signed(), we don't need PDA signing - just calling
         invoke(
             &Instruction {
-                program_id: ctx.accounts.verifier_program.key(),
-                accounts: vec![],  // Verifier needs no accounts, just proof data
-                data: instruction_data,
+                program_id: ctx.accounts.verifier_program.key(),  // The Sunspot verifier
+                accounts: vec![],  // Verifier is stateless - no accounts needed
+                data: instruction_data,  // proof bytes + public inputs
             },
             &[ctx.accounts.verifier_program.to_account_info()],
         )?;
-        // If we reach here, the proof is valid!
+        // If invoke() returns Ok, the ZK proof is valid!
+        // If invalid, it returns Err and our whole tx fails (atomic)
 
         // Mark nullifier as used (prevents double-spend)
 ```
