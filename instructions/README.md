@@ -43,15 +43,15 @@ The system uses cryptographic primitives working together:
 
 ## Tutorial Steps
 
-| Step | Topic                                                    | What You'll Learn                                      |
-| ---- | -------------------------------------------------------- | ------------------------------------------------------ |
-| 0    | [Introduction](./step-0-introduction.md)                 | Understanding the problem and starter code             |
-| 1    | [Commitments](./step-1-commitments.md)                   | Hiding deposit details with hashes                     |
-| 2    | [Nullifiers](./step-2-nullifiers.md)                     | Preventing double-spending privately                   |
-| 3    | [Merkle Trees](./step-3-merkle-trees.md)                 | Efficient membership proofs                            |
-| 4    | [ZK Circuits](./step-4-zk-circuits.md)                   | Understanding the withdrawal proof                     |
-| 5    | [Sunspot Verification](./step-5-sunspot-verification.md) | onchain proof verification                             |
-| 6    | [Demo & Client Architecture](./step-6-demo.md)           | Running the demo + Solana client-side patterns in code |
+| Step | Topic                                                      | What You'll Learn                                      |
+| ---- | ---------------------------------------------------------- | ------------------------------------------------------ |
+| 0    | [Introduction](./step-0-introduction.md)                   | Understanding the problem and starter code             |
+| 1    | [Hiding Deposits](./step-1-hiding-deposits.md)             | Hiding deposit details with hashes                     |
+| 2    | [Proving Membership](./step-2-proving-membership.md)       | Efficient membership proofs with Merkle trees          |
+| 3    | [Preventing Double-Spend](./step-3-preventing-double-spend.md) | Preventing double-spending with nullifiers         |
+| 4    | [The ZK Circuit](./step-4-zk-circuit.md)                   | Understanding the withdrawal proof                     |
+| 5    | [On-chain Verification](./step-5-onchain-verification.md)  | onchain proof verification                             |
+| 6    | [Demo](./step-6-demo.md)                                   | Running the demo + seeing it all work                  |
 
 ## Quick Start
 

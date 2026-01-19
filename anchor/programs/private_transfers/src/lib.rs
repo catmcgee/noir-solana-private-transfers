@@ -4,8 +4,8 @@ use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 
-// TODO (Step 5): Add Sunspot verifier program ID
-// TODO (Step 3): Add Merkle tree constants (TREE_DEPTH, ROOT_HISTORY_SIZE)
+// Step 2: Add Merkle tree constants here
+// Step 5: Add SUNSPOT_VERIFIER_ID here
 
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 
@@ -17,19 +17,17 @@ pub mod private_transfers {
         let pool = &mut ctx.accounts.pool;
         pool.authority = ctx.accounts.authority.key();
         pool.total_deposits = 0;
-
-        // TODO (Step 3): Initialize root history
+        // Step 2: Initialize next_leaf_index, current_root_index, roots[0]
+        // Step 3: Initialize nullifier_set.pool
 
         msg!("Pool initialized");
         Ok(())
     }
 
-    // STARTER: Public deposit - NO PRIVACY
-    // Anyone watching the blockchain can see WHO deposited and HOW MUCH
     pub fn deposit(
         ctx: Context<Deposit>,
-        // TODO (Step 1): Add commitment: [u8; 32]
-        // TODO (Step 3): Add new_root: [u8; 32]
+        // Step 1: Add commitment: [u8; 32]
+        // Step 2: Add new_root: [u8; 32]
         amount: u64,
     ) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
@@ -38,8 +36,8 @@ pub mod private_transfers {
             amount >= MIN_DEPOSIT_AMOUNT,
             PrivateTransfersError::DepositTooSmall
         );
+        // Step 2: Add tree full check
 
-        // Transfer SOL from depositor to vault using Anchor's CpiContext
         let cpi_context = CpiContext::new(
             *ctx.accounts.system_program.key,
             system_program::Transfer {
@@ -49,38 +47,33 @@ pub mod private_transfers {
         );
         system_program::transfer(cpi_context, amount)?;
 
-        // TODO (Step 3): Update root history
+        // Step 2: Save leaf_index, update root history
 
-        // PROBLEM: Everyone can see exactly who deposited!
         emit!(DepositEvent {
-            depositor: ctx.accounts.depositor.key(), // TODO (Step 1): Replace with commitment
+            depositor: ctx.accounts.depositor.key(), // Step 1: Change to commitment
             amount,
             timestamp: Clock::get()?.unix_timestamp,
-            // TODO (Step 1): Add leaf_index
-            // TODO (Step 3): Add new_root
+            // Step 2: Add leaf_index, new_root
         });
 
         pool.total_deposits += 1;
-        // TODO (Step 1): Increment next_leaf_index
+        // Step 2: Increment next_leaf_index
 
         msg!("Public deposit: {} lamports from {}", amount, ctx.accounts.depositor.key());
         Ok(())
     }
 
-    // STARTER: Public withdraw - NO PRIVACY
-    // Anyone watching the blockchain can see WHO withdrew
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        // TODO (Step 5): Add proof: Vec<u8>
-        // TODO (Step 2): Add nullifier_hash: [u8; 32]
-        // TODO (Step 3): Add root: [u8; 32]
+        // Step 5: Add proof: Vec<u8>
+        // Step 3: Add nullifier_hash: [u8; 32]
+        // Step 2: Add root: [u8; 32]
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
-        // TODO (Step 2): Check nullifier not used
-        // TODO (Step 3): Validate root is known
+        // Step 3: Check nullifier not used
+        // Step 2: Validate root is known
 
-        // Prevents front-running by binding to recipient
         require!(
             ctx.accounts.recipient.key() == recipient,
             PrivateTransfersError::RecipientMismatch
@@ -91,10 +84,9 @@ pub mod private_transfers {
             PrivateTransfersError::InsufficientVaultBalance
         );
 
-        // TODO (Step 5): Verify ZK proof via CPI to Sunspot
-        // TODO (Step 2): Mark nullifier as used
+        // Step 5: Verify ZK proof via CPI
+        // Step 3: Mark nullifier as used
 
-        // Transfer SOL from vault to recipient using Anchor's CpiContext with PDA signer
         let pool_key = ctx.accounts.pool.key();
         let seeds = &[b"vault".as_ref(), pool_key.as_ref(), &[ctx.bumps.pool_vault]];
         let signer_seeds = &[&seeds[..]];
@@ -109,12 +101,11 @@ pub mod private_transfers {
         );
         system_program::transfer(cpi_context, amount)?;
 
-        // PROBLEM: Everyone can see who withdrew!
         emit!(WithdrawEvent {
             recipient: ctx.accounts.recipient.key(),
             amount,
             timestamp: Clock::get()?.unix_timestamp,
-            // TODO (Step 2): Add nullifier_hash
+            // Step 3: Replace amount with nullifier_hash
         });
 
         msg!("Public withdrawal: {} lamports to {}", amount, recipient);
@@ -122,7 +113,7 @@ pub mod private_transfers {
     }
 }
 
-// TODO (Step 5): Add encode_public_inputs function for Gnark witness format
+// Step 5: Add encode_public_inputs function here
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -135,9 +126,8 @@ pub struct Initialize<'info> {
     )]
     pub pool: Account<'info, Pool>,
 
-    // TODO (Step 2): Add NullifierSet account
+    // Step 3: Add nullifier_set account here
 
-    /// CHECK: PDA validated by seeds
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -151,7 +141,6 @@ pub struct Deposit<'info> {
     #[account(mut, seeds = [b"pool"], bump)]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: PDA validated by seeds
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -165,9 +154,8 @@ pub struct Withdraw<'info> {
     #[account(seeds = [b"pool"], bump)]
     pub pool: Account<'info, Pool>,
 
-    // TODO (Step 2): Add NullifierSet account
+    // Step 3: Add nullifier_set account here
 
-    /// CHECK: PDA validated by seeds
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -175,33 +163,28 @@ pub struct Withdraw<'info> {
     #[account(mut)]
     pub recipient: UncheckedAccount<'info>,
 
-    // TODO (Step 5): Add Sunspot verifier program account
+    // Step 5: Add verifier_program account here
 
     pub system_program: Program<'info, System>,
 }
 
-// STARTER: Basic Pool - no privacy features yet
 #[account]
 #[derive(InitSpace)]
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    // TODO (Step 1): Add next_leaf_index: u64
-    // TODO (Step 3): Add current_root_index: u64
-    // TODO (Step 3): Add roots: [[u8; 32]; ROOT_HISTORY_SIZE]
+    // Step 2: Add next_leaf_index, current_root_index, roots
 }
 
-// TODO (Step 3): Add is_known_root method to Pool
-// TODO (Step 2): Add NullifierSet account struct
+// Step 2: Add is_known_root method to Pool
+// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
 
-// STARTER: Events show PUBLIC information - no privacy!
 #[event]
 pub struct DepositEvent {
-    pub depositor: Pubkey, // TODO (Step 1): Replace with commitment: [u8; 32]
+    pub depositor: Pubkey, // Step 1: Change to commitment: [u8; 32]
     pub amount: u64,
     pub timestamp: i64,
-    // TODO (Step 1): Add leaf_index: u64
-    // TODO (Step 3): Add new_root: [u8; 32]
+    // Step 2: Add leaf_index: u64, new_root: [u8; 32]
 }
 
 #[event]
@@ -209,19 +192,18 @@ pub struct WithdrawEvent {
     pub recipient: Pubkey,
     pub amount: u64,
     pub timestamp: i64,
-    // TODO (Step 2): Add nullifier_hash: [u8; 32]
+    // Step 3: Replace amount with nullifier_hash: [u8; 32]
 }
 
 #[error_code]
 pub enum PrivateTransfersError {
-    #[msg("Deposit amount too small (minimum 0.001 SOL)")]
+    #[msg("Deposit amount too small")]
     DepositTooSmall,
-    #[msg("Recipient account does not match recipient parameter")]
+    #[msg("Recipient mismatch")]
     RecipientMismatch,
-    #[msg("Insufficient vault balance for withdrawal")]
+    #[msg("Insufficient vault balance")]
     InsufficientVaultBalance,
-    // TODO (Step 1): Add TreeFull
-    // TODO (Step 2): Add NullifierUsed, NullifierSetFull
-    // TODO (Step 3): Add InvalidRoot
-    // TODO (Step 5): Add InvalidVerifier
+    // Step 2: Add TreeFull, InvalidRoot
+    // Step 3: Add NullifierUsed, NullifierSetFull
+    // Step 5: Add InvalidVerifier
 }
