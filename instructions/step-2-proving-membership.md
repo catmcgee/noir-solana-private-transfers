@@ -4,47 +4,109 @@
 
 Add Merkle tree root tracking so we can efficiently prove a commitment exists in the pool.
 
-## Where We Are
+---
+
+## The Concept
+
+We have commitments, but how do we prove one exists without revealing which one? **Merkle trees**.
+
+A Merkle tree is a binary tree of hashes. The root (32 bytes) represents ALL leaves. To prove a leaf exists, you only need ~10 hashes (the "proof path"), not all 1024 leaves.
 
 ```
-✅ Step 0: Understand the architecture
-✅ Step 1: Hide deposit details
-🔲 Step 2: Prove membership         ← You are here
-🔲 Step 3: Prevent double-spending
-🔲 Step 4: The ZK circuit
-🔲 Step 5: On-chain verification
+         Root
+        /    \
+      H12    H34
+      / \    / \
+     H1 H2  H3 H4
+     |   |   |   |
+    C1  C2  C3  C4  ← commitments (leaves)
+```
+
+To prove C2 exists, you provide: H1, H34. The verifier computes: `Hash(H1, C2) → H12`, then `Hash(H12, H34) → Root`. If it matches the stored root, C2 exists.
+
+We store only the root on-chain (32 bytes). The backend maintains the full tree.
+
+---
+
+## The Deposit Flow (Enhanced)
+
+Let's trace how Merkle trees fit into the deposit flow.
+
+---
+
+### 1. Backend Computes the Merkle Root (READ)
+
+**File:** `backend/src/server.ts` - find the `/api/deposit` endpoint
+
+After generating the commitment (Step 1), the backend also updates the Merkle tree:
+
+```typescript
+app.post("/api/deposit", async (req, res) => {
+  const { amount } = req.body
+
+  // Step 1: Generate secrets and commitment
+  const nullifier = generateRandomField()
+  const secret = generateRandomField()
+  const commitment = poseidon2Hash([nullifier, secret, amount])
+
+  // Step 2: Add commitment to Merkle tree and get new root
+  const leafIndex = merkleTree.nextIndex
+  merkleTree.insert(commitment)  // Add commitment as a new leaf
+  const merkleRoot = merkleTree.root  // Get the updated root
+```
+
+The backend returns both the deposit note and the new root:
+
+```typescript
+  const depositNote = {
+    // ... secrets ...
+    merkleRoot: merkleRoot,      // The root at time of deposit
+    leafIndex: leafIndex,        // Position in tree - needed for withdrawal proof
+  }
+
+  res.json({
+    depositNote,
+    onChainData: {
+      commitment: commitmentBytes,
+      newRoot: merkleRootBytes,  // Send new root to store on-chain
+      amount: amount.toString(),
+    },
+  })
 ```
 
 ---
 
-## The Flow
+### 2. Frontend Sends the New Root (READ)
 
-Here's how Merkle trees fit into both flows:
+**File:** `frontend/src/components/DepositSection.tsx` - in `handleDeposit`
 
-```
-DEPOSIT FLOW:
-1. User deposits with commitment
-2. Backend computes new Merkle root (adding commitment to tree)
-3. Frontend sends transaction with commitment + new_root
-4. Program stores the new root in history                    <-- We add this
-5. Program tracks the deposit's position (leaf_index)        <-- We add this
+The frontend now sends the new root along with the commitment (you already typed this in Step 1):
 
-WITHDRAWAL FLOW:
-1. User wants to withdraw
-2. Backend computes Merkle proof (path from leaf to root using leaf_index)
-3. ZK circuit verifies the proof matches a known root        <-- Step 4
-4. Program checks the root exists in history                 <-- We add this
+```typescript
+  const dataEncoder = getDepositInstructionDataEncoder()
+  const instructionData = dataEncoder.encode({
+    commitment: new Uint8Array(onChainData.commitment),
+    newRoot: new Uint8Array(onChainData.newRoot),  // The updated Merkle root
+    amount: BigInt(onChainData.amount),
+  })
 ```
 
-We only store the root on-chain (32 bytes), not the whole tree. The backend maintains the full tree and computes proofs.
+Now let's update the program to store this root...
 
 ---
 
-## Program Updates
+### 3. Program Stores the Root (TYPE)
 
-### 1. Add constants at the top
+**File:** `anchor/programs/private_transfers/src/lib.rs`
 
-In `lib.rs`, find:
+The program needs to:
+1. Accept the new root as a parameter
+2. Store it in a history (ring buffer)
+3. Track the leaf index for events
+
+#### Add constants at the top
+
+Find:
 
 ```rust
 // Step 2: Add Merkle tree constants here
@@ -56,12 +118,18 @@ pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 Replace with:
 
 ```rust
-pub const TREE_DEPTH: usize = 10;              // 2^10 = 1024 max deposits
-pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH;   // 1024
-pub const ROOT_HISTORY_SIZE: usize = 10;       // Keep last 10 roots
+// Maximum depth of our Merkle tree
+// A depth of 10 means 2^10 = 1024 possible deposits
+pub const TREE_DEPTH: usize = 10;
 
-// Precomputed root of an empty tree (all leaves are zero)
-// Computed with Poseidon2 from @zkpassport/poseidon2 / noir-lang/poseidon
+// Maximum number of leaves (deposits) our tree can hold
+pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH;
+
+// How many recent Merkle roots we keep in history
+pub const ROOT_HISTORY_SIZE: usize = 10;
+
+// The Merkle root of a completely empty tree (all leaves are zero)
+// Pre-computed using Poseidon2 hash
 pub const EMPTY_ROOT: [u8; 32] = [
     0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35,
     0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
@@ -73,18 +141,17 @@ pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 ```
 
 **Why these values?**
+- `TREE_DEPTH: 10` - Balances capacity (1024 deposits) with proof size (10 hashes)
+- `ROOT_HISTORY_SIZE: 10` - Keeps recent roots so proofs don't expire too quickly
+- `EMPTY_ROOT` - Pre-computed because computing it on-chain would waste compute units
 
-- `TREE_DEPTH: 10` - A depth-10 tree holds 2^10 = 1024 deposits
-- `ROOT_HISTORY_SIZE: 10` - We keep 10 roots so proofs against recent roots still work
-- `EMPTY_ROOT` - The root of a tree where all leaves are zero (precomputed)
-
-### 2. Update Pool struct
-
-We need to track deposit order (leaf_index) and store recent roots (ring buffer pattern).
+#### Update Pool struct
 
 Find:
 
 ```rust
+#[account]
+#[derive(InitSpace)]
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
@@ -98,30 +165,32 @@ pub struct Pool {
 Replace with:
 
 ```rust
+#[account]
+#[derive(InitSpace)]
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    pub next_leaf_index: u64,
-    pub current_root_index: u64,
-    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],
+    pub next_leaf_index: u64,     // Which slot the next deposit goes into (0, 1, 2...)
+    pub current_root_index: u64,  // Pointer to newest root in the ring buffer
+    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],  // Ring buffer of recent roots
 }
 
 impl Pool {
+    /// Check if a Merkle root exists in our recent history
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
         self.roots.iter().any(|r| r == root)
     }
 }
+
+// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
 ```
 
-**Why track leaf_index?** Each deposit gets a unique position in the Merkle tree. The user saves this index in their deposit note - they'll need it for the backend to compute the Merkle proof path during withdrawal.
+**Solana concept - Ring Buffer Pattern:**
+- We can't use `Vec` that grows dynamically (account size is fixed)
+- Instead, we use a fixed-size array and overwrite old entries
+- When we add a new root, we increment the index (wrapping around at 10)
 
-**Why a ring buffer for roots?**
-
-- Fixed-size array (not Vec) because Solana account sizes are fixed at creation
-- New roots overwrite the oldest ones
-- Users can generate a proof, wait, and submit later - as long as the root is still in history
-
-### 3. Initialize Pool in initialize function
+#### Initialize Pool in initialize function
 
 Find:
 
@@ -137,23 +206,23 @@ Replace with:
 
 ```rust
         pool.total_deposits = 0;
-        pool.next_leaf_index = 0;      // First deposit gets index 0
+        pool.next_leaf_index = 0;
         pool.current_root_index = 0;
-        pool.roots[0] = EMPTY_ROOT;    // Start with empty tree root
+        pool.roots[0] = EMPTY_ROOT;
+        // Step 3: Initialize nullifier_set.pool
 
         msg!("Pool initialized");
 ```
 
-### 4. Update deposit function signature
-
-The frontend now sends the new Merkle root (computed off-chain).
+#### Update deposit function signature
 
 Find:
 
 ```rust
     pub fn deposit(
         ctx: Context<Deposit>,
-        commitment: [u8; 32],  // The hash computed off-chain by the backend
+        commitment: [u8; 32],  // The hash computed off-chain
+        // Step 2: Add new_root: [u8; 32]
         amount: u64,
     ) -> Result<()> {
 ```
@@ -164,16 +233,14 @@ Replace with:
     pub fn deposit(
         ctx: Context<Deposit>,
         commitment: [u8; 32],
-        new_root: [u8; 32],
+        new_root: [u8; 32],     // The new Merkle root after adding this commitment
         amount: u64,
     ) -> Result<()> {
 ```
 
-**Why trust the client?** If they submit a wrong root, any proof against that root will fail. Invalid roots are useless - they can't help attackers.
+#### Add tree full check
 
-### 5. Add tree full check
-
-After the `MIN_DEPOSIT_AMOUNT` check, find:
+Find:
 
 ```rust
         require!(
@@ -193,7 +260,6 @@ Replace with:
             PrivateTransfersError::DepositTooSmall
         );
 
-        // Check tree isn't full
         require!(
             pool.next_leaf_index < MAX_LEAVES,
             PrivateTransfersError::TreeFull
@@ -202,7 +268,7 @@ Replace with:
         let cpi_context = CpiContext::new(
 ```
 
-### 6. Update root history and leaf_index after transfer
+#### Update root history and leaf_index after transfer
 
 Find:
 
@@ -216,10 +282,13 @@ Find:
             commitment,
             amount,
             timestamp: Clock::get()?.unix_timestamp,
+            // Step 2: Add leaf_index, new_root
         });
 
         pool.total_deposits += 1;
         // Step 2: Increment next_leaf_index
+
+        msg!("Deposit: {} lamports", amount);
 ```
 
 Replace with:
@@ -227,15 +296,14 @@ Replace with:
 ```rust
         system_program::transfer(cpi_context, amount)?;
 
-        // Save the current leaf index before incrementing
+        // Save current leaf index BEFORE incrementing
         let leaf_index = pool.next_leaf_index;
 
-        // Update Merkle root history (ring buffer)
+        // Update Merkle root history using ring buffer pattern
         let new_root_index = ((pool.current_root_index + 1) % ROOT_HISTORY_SIZE as u64) as usize;
         pool.roots[new_root_index] = new_root;
         pool.current_root_index = new_root_index as u64;
 
-        // Emit event with commitment and position
         emit!(DepositEvent {
             commitment,
             leaf_index,
@@ -243,18 +311,13 @@ Replace with:
             new_root,
         });
 
-        pool.next_leaf_index += 1;  // Next deposit gets the next index
+        pool.next_leaf_index += 1;
         pool.total_deposits += 1;
+
+        msg!("Deposit: {} lamports at leaf index {}", amount, leaf_index);
 ```
 
-**What this does:**
-
-- Saves leaf_index before incrementing (current deposit uses index N, then increment to N+1)
-- `(current + 1) % SIZE` - Wraps around when we reach the end (ring buffer)
-- Stores the new root in the next slot
-- Updates the pointer to the newest root
-
-### 7. Update DepositEvent
+#### Update DepositEvent
 
 Find:
 
@@ -264,6 +327,8 @@ pub struct DepositEvent {
     pub commitment: [u8; 32],  // The hash - no identity revealed
     pub amount: u64,
     pub timestamp: i64,
+    // Step 2: Add leaf_index: u64, new_root: [u8; 32]
+}
 ```
 
 Replace with:
@@ -278,11 +343,34 @@ pub struct DepositEvent {
 }
 ```
 
-**Why include leaf_index?** The user needs to know which "slot" their deposit is in. This gets saved in their deposit note and used by the backend to compute the Merkle proof path.
+---
 
-**Why emit new_root?** Indexers can use this to verify the tree state. Users save it in their deposit note for withdrawal.
+## The Withdrawal Flow (Root Validation)
 
-### 8. Add root parameter to withdraw
+For withdrawals, we need to verify the proof was generated against a root we actually stored.
+
+---
+
+### 1. Backend Provides the Merkle Proof (READ)
+
+**File:** `backend/src/server.ts` - find `/api/withdraw` endpoint
+
+The backend computes the Merkle proof using the stored tree:
+
+```typescript
+// Get the sibling hashes along the path from leaf to root
+const proof = merkleTree.getProof(leafIndex)
+// proof.siblings = [H1, H34, ...] - 10 hashes
+// proof.pathIndices = [0, 1, ...] - which side at each level
+```
+
+---
+
+### 2. Program Validates the Root (TYPE)
+
+**File:** `anchor/programs/private_transfers/src/lib.rs`
+
+#### Add root parameter to withdraw
 
 Find:
 
@@ -304,15 +392,15 @@ Replace with:
         ctx: Context<Withdraw>,
         // Step 5: Add proof: Vec<u8>
         // Step 3: Add nullifier_hash: [u8; 32]
-        root: [u8; 32],
+        root: [u8; 32],        // The Merkle root the ZK proof was generated against
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
 ```
 
-### 9. Add root validation in withdraw
+#### Add root validation in withdraw
 
-Find (after the function signature):
+Find:
 
 ```rust
     ) -> Result<()> {
@@ -320,6 +408,7 @@ Find (after the function signature):
         // Step 2: Validate root is known
 
         require!(
+            ctx.accounts.recipient.key() == recipient,
 ```
 
 Replace with:
@@ -335,25 +424,15 @@ Replace with:
         );
 
         require!(
+            ctx.accounts.recipient.key() == recipient,
 ```
 
-**Why validate the root?** The ZK proof proves the commitment is in a tree with this root. We need to verify that root is one we actually stored.
+**Why validate the root?**
+- The ZK proof says "I know a commitment in a tree with root X"
+- We need to verify X is a root WE stored from a real deposit
+- Otherwise attackers could generate proofs against fake trees
 
-### 10. Update the log message in deposit
-
-Find:
-
-```rust
-        msg!("Deposit: {} lamports", amount);
-```
-
-Replace with:
-
-```rust
-        msg!("Deposit: {} lamports at leaf index {}", amount, leaf_index);
-```
-
-### 11. Add error codes
+#### Add error codes
 
 Find:
 
@@ -371,9 +450,12 @@ Add after it:
     InvalidRoot,
 ```
 
+---
+
 ### Build
 
 ```bash
+cd anchor
 anchor build
 ```
 
@@ -381,15 +463,15 @@ anchor build
 
 ## What Changed
 
-**Deposit:**
-- Frontend sends commitment + new_root
-- Program tracks leaf_index (position in tree)
-- Program stores root in history
-- Event includes leaf_index and new_root
+**Deposit flow:**
+1. Backend computes new Merkle root after adding commitment
+2. Frontend sends commitment + new_root to program
+3. Program stores root in ring buffer history
+4. Event includes leaf_index so user knows their position
 
-**Withdraw:**
-- Transaction includes the root the proof was made against
-- Program verifies that root is in our history
+**Withdrawal flow:**
+1. User provides the root their proof was generated against
+2. Program checks that root exists in history
 
 ---
 

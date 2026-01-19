@@ -1,5 +1,6 @@
 import { Buffer } from 'buffer'
-window.Buffer = Buffer
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(window as any).Buffer = Buffer
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
