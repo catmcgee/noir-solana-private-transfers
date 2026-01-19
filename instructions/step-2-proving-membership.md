@@ -47,8 +47,8 @@ We only store the root on-chain (32 bytes), not the whole tree. The backend main
 In `lib.rs`, find:
 
 ```rust
-// TODO (Step 5): Add Sunspot verifier program ID
-// TODO (Step 2): Add Merkle tree constants (TREE_DEPTH, ROOT_HISTORY_SIZE)
+// Step 2: Add Merkle tree constants here
+// Step 5: Add SUNSPOT_VERIFIER_ID here
 
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 ```
@@ -88,29 +88,25 @@ Find:
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    // TODO (Step 2): Add next_leaf_index: u64
-    // TODO (Step 2): Add current_root_index: u64
-    // TODO (Step 2): Add roots: [[u8; 32]; ROOT_HISTORY_SIZE]
+    // Step 2: Add next_leaf_index, current_root_index, roots
 }
 
-// TODO (Step 2): Add is_known_root method to Pool
+// Step 2: Add is_known_root method to Pool
+// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
 ```
 
 Replace with:
 
 ```rust
-#[account]
-#[derive(InitSpace)]
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    pub next_leaf_index: u64,                         // Tracks deposit order (0, 1, 2, ...)
-    pub current_root_index: u64,                      // Points to newest root
-    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],         // Ring buffer of recent roots
+    pub next_leaf_index: u64,
+    pub current_root_index: u64,
+    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],
 }
 
 impl Pool {
-    // Check if a root exists in our recent history
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
         self.roots.iter().any(|r| r == root)
     }
@@ -131,6 +127,8 @@ Find:
 
 ```rust
         pool.total_deposits = 0;
+        // Step 2: Initialize next_leaf_index, current_root_index, roots[0]
+        // Step 3: Initialize nullifier_set.pool
 
         msg!("Pool initialized");
 ```
@@ -155,7 +153,7 @@ Find:
 ```rust
     pub fn deposit(
         ctx: Context<Deposit>,
-        commitment: [u8; 32],
+        commitment: [u8; 32],  // The hash computed off-chain by the backend
         amount: u64,
     ) -> Result<()> {
 ```
@@ -166,7 +164,7 @@ Replace with:
     pub fn deposit(
         ctx: Context<Deposit>,
         commitment: [u8; 32],
-        new_root: [u8; 32],  // Client computes the new root after adding their commitment
+        new_root: [u8; 32],
         amount: u64,
     ) -> Result<()> {
 ```
@@ -182,8 +180,9 @@ After the `MIN_DEPOSIT_AMOUNT` check, find:
             amount >= MIN_DEPOSIT_AMOUNT,
             PrivateTransfersError::DepositTooSmall
         );
+        // Step 2: Add tree full check
 
-        // Transfer SOL from depositor to vault
+        let cpi_context = CpiContext::new(
 ```
 
 Replace with:
@@ -200,7 +199,7 @@ Replace with:
             PrivateTransfersError::TreeFull
         );
 
-        // Transfer SOL from depositor to vault
+        let cpi_context = CpiContext::new(
 ```
 
 ### 6. Update root history and leaf_index after transfer
@@ -208,7 +207,9 @@ Replace with:
 Find:
 
 ```rust
-        )?;
+        system_program::transfer(cpi_context, amount)?;
+
+        // Step 2: Save leaf_index, update root history
 
         // Emit event with commitment instead of depositor address
         emit!(DepositEvent {
@@ -218,12 +219,13 @@ Find:
         });
 
         pool.total_deposits += 1;
+        // Step 2: Increment next_leaf_index
 ```
 
 Replace with:
 
 ```rust
-        )?;
+        system_program::transfer(cpi_context, amount)?;
 
         // Save the current leaf index before incrementing
         let leaf_index = pool.next_leaf_index;
@@ -259,7 +261,7 @@ Find:
 ```rust
 #[event]
 pub struct DepositEvent {
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 32],  // The hash - no identity revealed
     pub amount: u64,
     pub timestamp: i64,
 ```
@@ -270,9 +272,9 @@ Replace with:
 #[event]
 pub struct DepositEvent {
     pub commitment: [u8; 32],
-    pub leaf_index: u64,       // The deposit's position in the Merkle tree
+    pub leaf_index: u64,
     pub timestamp: i64,
-    pub new_root: [u8; 32],    // The Merkle root after this deposit
+    pub new_root: [u8; 32],
 }
 ```
 
@@ -287,6 +289,9 @@ Find:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
+        // Step 5: Add proof: Vec<u8>
+        // Step 3: Add nullifier_hash: [u8; 32]
+        // Step 2: Add root: [u8; 32]
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
@@ -297,7 +302,9 @@ Replace with:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        root: [u8; 32],  // The Merkle root the proof was generated against
+        // Step 5: Add proof: Vec<u8>
+        // Step 3: Add nullifier_hash: [u8; 32]
+        root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
@@ -305,14 +312,29 @@ Replace with:
 
 ### 9. Add root validation in withdraw
 
-At the start of the withdraw function, add:
+Find (after the function signature):
 
 ```rust
+    ) -> Result<()> {
+        // Step 3: Check nullifier not used
+        // Step 2: Validate root is known
+
+        require!(
+```
+
+Replace with:
+
+```rust
+    ) -> Result<()> {
+        // Step 3: Check nullifier not used
+
         // Verify the root exists in our history
         require!(
             ctx.accounts.pool.is_known_root(&root),
             PrivateTransfersError::InvalidRoot
         );
+
+        require!(
 ```
 
 **Why validate the root?** The ZK proof proves the commitment is in a tree with this root. We need to verify that root is one we actually stored.

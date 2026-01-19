@@ -71,8 +71,11 @@ In `lib.rs`, find:
 ```rust
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::invoke;
+use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
+
+pub const TREE_DEPTH: usize = 10;
 ```
 
 Replace with:
@@ -81,11 +84,14 @@ Replace with:
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
+use anchor_lang::system_program;
 
 declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 
 // PASTE YOUR VERIFIER PROGRAM ID HERE!
 pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ");
+
+pub const TREE_DEPTH: usize = 10;
 ```
 
 **What's new:**
@@ -99,7 +105,7 @@ The verifier expects public inputs in a specific binary format (Gnark witness fo
 Find:
 
 ```rust
-// TODO (Step 5): Add encode_public_inputs function for Gnark witness format
+// Step 5: Add encode_public_inputs function here
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -154,7 +160,7 @@ Find:
     #[account(mut)]
     pub recipient: UncheckedAccount<'info>,
 
-    // TODO (Step 5): Add Sunspot verifier program account
+    // Step 5: Add verifier_program account here
 
     pub system_program: Program<'info, System>,
 }
@@ -191,6 +197,7 @@ Find:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
+        // Step 5: Add proof: Vec<u8>
         nullifier_hash: [u8; 32],
         root: [u8; 32],
         recipient: Pubkey,
@@ -203,7 +210,7 @@ Replace with:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        proof: Vec<u8>,           // 256-byte Groth16 proof
+        proof: Vec<u8>,
         nullifier_hash: [u8; 32],
         root: [u8; 32],
         recipient: Pubkey,
@@ -223,6 +230,8 @@ Find:
             PrivateTransfersError::InsufficientVaultBalance
         );
 
+        // Step 5: Verify ZK proof via CPI
+
         // Mark nullifier as used BEFORE transfer (prevents reentrancy)
 ```
 
@@ -241,13 +250,11 @@ Replace with:
         invoke(
             &Instruction {
                 program_id: ctx.accounts.verifier_program.key(),
-                accounts: vec![],  // Verifier is stateless - no accounts needed
+                accounts: vec![],
                 data: instruction_data,
             },
             &[ctx.accounts.verifier_program.to_account_info()],
         )?;
-        // If invoke() returns Ok, the proof is valid!
-        // If invalid, it returns Err and the entire transaction fails
 
         // Mark nullifier as used BEFORE transfer (prevents reentrancy)
 ```
@@ -264,17 +271,17 @@ Replace with:
 Find:
 
 ```rust
-    #[msg("Unknown Merkle root")]
-    InvalidRoot,
-    // TODO (Step 5): Add InvalidVerifier
+    #[msg("Nullifier set is full")]
+    NullifierSetFull,
+    // Step 5: Add InvalidVerifier
 }
 ```
 
 Replace with:
 
 ```rust
-    #[msg("Unknown Merkle root")]
-    InvalidRoot,
+    #[msg("Nullifier set is full")]
+    NullifierSetFull,
     #[msg("Invalid verifier program")]
     InvalidVerifier,
 }

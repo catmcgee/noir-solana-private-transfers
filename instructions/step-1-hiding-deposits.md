@@ -75,8 +75,8 @@ In `anchor/programs/private_transfers/src/lib.rs`, find:
 ```rust
     pub fn deposit(
         ctx: Context<Deposit>,
-        // TODO (Step 1): Add commitment: [u8; 32]
-        // TODO (Step 2): Add new_root: [u8; 32]
+        // Step 1: Add commitment: [u8; 32]
+        // Step 2: Add new_root: [u8; 32]
         amount: u64,
     ) -> Result<()> {
 ```
@@ -101,17 +101,15 @@ Find:
 
 ```rust
 pub struct DepositEvent {
-    pub depositor: Pubkey, // TODO (Step 1): Replace with commitment: [u8; 32]
+    pub depositor: Pubkey, // Step 1: Change to commitment: [u8; 32]
     pub amount: u64,
     pub timestamp: i64,
-    // TODO (Step 2): Add leaf_index: u64
-    // TODO (Step 2): Add new_root: [u8; 32]
+    // Step 2: Add leaf_index: u64, new_root: [u8; 32]
 ```
 
 Replace with:
 
 ```rust
-#[event]
 pub struct DepositEvent {
     pub commitment: [u8; 32],  // The hash - no identity revealed
     pub amount: u64,
@@ -123,13 +121,11 @@ pub struct DepositEvent {
 Find:
 
 ```rust
-        // PROBLEM: Everyone can see exactly who deposited!
         emit!(DepositEvent {
-            depositor: ctx.accounts.depositor.key(), // TODO (Step 1): Replace with commitment
+            depositor: ctx.accounts.depositor.key(), // Step 1: Change to commitment
             amount,
             timestamp: Clock::get()?.unix_timestamp,
-            // TODO (Step 2): Add leaf_index
-            // TODO (Step 2): Add new_root
+            // Step 2: Add leaf_index, new_root
         });
 
         pool.total_deposits += 1;

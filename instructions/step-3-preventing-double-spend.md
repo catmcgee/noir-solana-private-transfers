@@ -46,18 +46,20 @@ In `lib.rs`, find after the Pool impl block:
 
 ```rust
 impl Pool {
+    // Check if a root exists in our recent history
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
         self.roots.iter().any(|r| r == root)
     }
 }
 
-// TODO (Step 3): Add NullifierSet account struct
+#[event]
 ```
 
 Replace with:
 
 ```rust
 impl Pool {
+    // Check if a root exists in our recent history
     pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
         self.roots.iter().any(|r| r == root)
     }
@@ -66,18 +68,16 @@ impl Pool {
 #[account]
 #[derive(InitSpace)]
 pub struct NullifierSet {
-    pub pool: Pubkey,               // Which pool this belongs to
-    #[max_len(256)]                 // Max 256 nullifiers = 8KB storage
-    pub nullifiers: Vec<[u8; 32]>,  // List of used nullifier hashes
+    pub pool: Pubkey,
+    #[max_len(256)]
+    pub nullifiers: Vec<[u8; 32]>,
 }
 
 impl NullifierSet {
-    // Check if a nullifier has already been spent
     pub fn is_nullifier_used(&self, nullifier_hash: &[u8; 32]) -> bool {
         self.nullifiers.contains(nullifier_hash)
     }
 
-    // Mark a nullifier as spent
     pub fn mark_nullifier_used(&mut self, nullifier_hash: [u8; 32]) -> Result<()> {
         require!(
             self.nullifiers.len() < 256,
@@ -87,6 +87,8 @@ impl NullifierSet {
         Ok(())
     }
 }
+
+#[event]
 ```
 
 **What each part does:**
@@ -107,7 +109,7 @@ Find:
 ```rust
     pub pool: Account<'info, Pool>,
 
-    // TODO (Step 3): Add NullifierSet account
+    // Step 3: Add nullifier_set account here
 
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
@@ -166,10 +168,10 @@ Replace with:
 Find:
 
 ```rust
-    #[account(mut, seeds = [b"pool"], bump)]
+    #[account(seeds = [b"pool"], bump)]
     pub pool: Account<'info, Pool>,
 
-    // TODO (Step 3): Add NullifierSet account
+    // Step 3: Add nullifier_set account here
 
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
@@ -197,11 +199,14 @@ Find:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        // TODO (Step 3): Add nullifier_hash: [u8; 32]
+        // Step 5: Add proof: Vec<u8>
+        // Step 3: Add nullifier_hash: [u8; 32]
         root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
+        // Step 3: Check nullifier not used
+
         // Verify the root exists in our history
         require!(
 ```
@@ -211,7 +216,8 @@ Replace with:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        nullifier_hash: [u8; 32],  // Hash of the user's nullifier
+        // Step 5: Add proof: Vec<u8>
+        nullifier_hash: [u8; 32],
         root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
@@ -235,18 +241,21 @@ Replace with:
 Find:
 
 ```rust
-        // TODO (Step 4): Verify ZK proof via CPI to Sunspot
+        // Step 5: Verify ZK proof via CPI
+        // Step 3: Mark nullifier as used
 
-        // Transfer SOL from vault to recipient
+        let pool_key = ctx.accounts.pool.key();
 ```
 
 Replace with:
 
 ```rust
+        // Step 5: Verify ZK proof via CPI
+
         // Mark nullifier as used BEFORE transfer (prevents reentrancy)
         nullifier_set.mark_nullifier_used(nullifier_hash)?;
 
-        // Transfer SOL from vault to recipient
+        let pool_key = ctx.accounts.pool.key();
 ```
 
 **Why before transfer?** This is a security pattern. If we marked it after the transfer and the transfer somehow re-entered our program, the nullifier wouldn't be marked yet.
@@ -261,6 +270,7 @@ pub struct WithdrawEvent {
     pub recipient: Pubkey,
     pub amount: u64,
     pub timestamp: i64,
+    // Step 3: Replace amount with nullifier_hash: [u8; 32]
 }
 ```
 
@@ -269,7 +279,7 @@ Replace with:
 ```rust
 #[event]
 pub struct WithdrawEvent {
-    pub nullifier_hash: [u8; 32],  // Unique identifier for this withdrawal
+    pub nullifier_hash: [u8; 32],
     pub recipient: Pubkey,
     pub timestamp: i64,
 }
@@ -286,6 +296,7 @@ Find:
             recipient: ctx.accounts.recipient.key(),
             amount,
             timestamp: Clock::get()?.unix_timestamp,
+            // Step 3: Replace amount with nullifier_hash
         });
 ```
 
