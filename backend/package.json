@@ -7,10 +7,14 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@noir-lang/backend_barretenberg": "^0.36.0",
+    "@noir-lang/noir_js": "^1.0.0-beta.18",
     "@solana/kit": "^2.1.0",
+    "@zkpassport/poseidon2": "^0.6.2",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
