@@ -6,14 +6,14 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-mock_verifier = "4T8nxeiE9c4x55cPhXbqr1rzwXvggLTZkUfDGoSb9yrJ"
-private_transfers = "2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn"
-sunspot_verifier = "CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ"
+mock_verifier = "E5PrYyzzcUptVMNkKV3fRw1bVn1Ma4zCrH4tyktnrbF5"
+private_transfers = "9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M"
+sunspot_verifier = "Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV"
 
 [programs.localnet]
 mock_verifier = "4T8nxeiE9c4x55cPhXbqr1rzwXvggLTZkUfDGoSb9yrJ"
 private_transfers = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-sunspot_verifier = "CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ"
+sunspot_verifier = "Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV"
 
 [registry]
 url = "https://api.apr.dev"
@@ -33,5 +33,5 @@ shutdown_wait = 2000
 upgradeable = false
 
 [[test.genesis]]
-address = "CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ"
+address = "Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV"
 program = "target/deploy/sunspot_verifier.so"

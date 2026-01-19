@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("4T8nxeiE9c4x55cPhXbqr1rzwXvggLTZkUfDGoSb9yrJ");
+declare_id!("E5PrYyzzcUptVMNkKV3fRw1bVn1Ma4zCrH4tyktnrbF5");
 
 /// Mock verifier program for local testing
 /// In production, replace with actual Sunspot-generated verifier

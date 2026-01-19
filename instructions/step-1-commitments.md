@@ -2,46 +2,30 @@
 
 ## Goal
 
-Replace the public depositor address with a cryptographic commitment that hides all deposit details.
+Replace the public depositor address with a cryptographic commitment.
 
-## Escrow vs Private Pool
+## The Flow
 
-In your escrow, the `Escrow` account stored the maker's pubkey:
-
-```rust
-pub struct Escrow {
-    pub maker: Pubkey,  // public
-    pub amount: u64,
-}
-```
-
-In our private pool, we'll store a **commitment** instead - a hash that hides the depositor's identity:
-
-```rust
-// Private pool stores a hash - no identity revealed
-pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub amount: u64,
-}
-```
-
-## What are commitments?
-
-Commitment is the word ZK people use to describe an entry into storage, and is simply a hash:
+Here's how commitments fit into the deposit flow:
 
 ```
-commitment = Hash(nullifier, secret, amount)
+USER DEPOSITS:
+1. User enters amount in frontend
+2. Frontend calls backend API
+3. Backend generates random nullifier + secret
+4. Backend runs hasher circuit to compute commitment    <-- We look at this circuit below
+5. Backend returns deposit note (user saves this) + commitment
+6. Frontend sends transaction with commitment           <-- We update the program to accept this
+7. Program stores commitment in event (not depositor address)
 ```
 
-The `nullifier` and `secret` are random values the user generates locally. Only they know these values - they're never sent to Solana.
+The hasher circuit runs **off-chain in the backend** - not on Solana. This keeps the nullifier and secret private.
 
-Given the commitment hash, you can't reverse-engineer the inputs.
+---
 
-## The hasher circuit
+## The Hasher Circuit
 
-In this example, our circuit hashes our commitment.
-
-Open `circuits/hasher/src/main.nr` to see the Noir circuit that computes commitments:
+Open `circuits/hasher/src/main.nr`. This is a Noir circuit that the **backend runs when a user deposits**.
 
 ```noir
 fn main(nullifier: Field, secret: Field, amount: Field) -> pub (Field, Field) {
@@ -51,70 +35,16 @@ fn main(nullifier: Field, secret: Field, amount: Field) -> pub (Field, Field) {
 }
 ```
 
-This circuit:
+**What each line does:**
 
-- Takes three inputs: `nullifier`, `secret`, and `amount`
-- Computes two hashes using Poseidon (a ZK-friendly hash function)
-- Returns the `commitment` (hides all three values) and `nullifier_hash` (used later for double-spend prevention - we learn about this in the next step)
+- `nullifier: Field, secret: Field, amount: Field` - Takes three inputs. `Field` is a number type used in ZK circuits.
+- `poseidon2::bn254::hash_is 3([...])` - Hashes three values together using Poseidon2. Returns the commitment.
+- `poseidon2::bn254::hash_1([nullifier])` - Hashes just the nullifier. We use this later for double-spend prevention.
+- `-> pub (Field, Field)` - Returns two public outputs: commitment and nullifier_hash.
 
-![image](./assets/posiedon_hash.png)
+**When does this run?** The backend calls `nargo execute` on this circuit when a user clicks deposit. The circuit computes the commitment, then the backend returns it to the frontend to include in the transaction.
 
-### Why not hash onchain?
-
-All Solana transaction data is public. If we called `hash(nullifier, secret, amount)` onchain, everyone would see the inputs.
-
-The whole point of commitments is to hide these values. Hashing onchain defeats the point.
-
-Hash offchain, submit only the result
-
-![image](./assets/offchain_vs_onchain.png)
-
-```
-Client (private):           Solana (public):
-nullifier = 12345...   →    commitment = 0x7a3b...  ← Only this is visible
-secret = 67890...
-amount = 1000000
-         ↓
-commitment = Poseidon2(nullifier, secret, amount)
-```
-
-The client computes the hash locally using Noir, then submits just the 32-byte commitment. The private inputs never touch the blockchain.
-
-This is safe because:
-
-1. If the client computes a wrong commitment, their withdrawal proof won't work
-2. The ZK proof verifies the hash was computed correctly (without revealing inputs)
-
-### When would you hash onchain?
-
-Solana Poseidon exists and is useful - just not for private data.
-
-**ZK for scalability, not just privacy**
-
-ZK proofs aren't only about hiding information - they're also used to make data smaller. For example, [Light Protocol](https://github.com/Lightprotocol/light-protocol) uses ZK and onchain Poseidon hashing for compressed accounts. They call this ZKCompression..
-
-```
-Regular Solana account:     Compressed account:
-┌─────────────────────┐     ┌─────────────────────┐
-│ owner: 32 bytes     │     │                     │
-│ balance: 8 bytes    │ →   │ root: 32 bytes      │  (Merkle root of many accounts)
-│ data: 100+ bytes    │     │                     │
-│ rent: paid per byte │     └─────────────────────┘
-└─────────────────────┘
-        140+ bytes                  32 bytes
-```
-
-Instead of storing full account data onchain, Light Protocol stores a Merkle root. The actual data lives offchain, and ZK proofs verify state transitions. This cuts storage costs by 1000x+ for things like airdrops and NFT mints.
-
-In this case, hashing onchain is fine because the data (addresses, balances) is public anyway.
-
-### The Poseidon Syscall
-
-> 💡 **What's a syscall?** A syscall (system call) is a pre-compiled function built into the Solana runtime - like `sol_sha256` for SHA256 hashing. Syscalls are much faster and cheaper than implementing the same logic in your program because they run as native code, not BPF bytecode.
-
-There's a `sol_poseidon` syscall that makes onchain Poseidon cheap, but it's only active on **testnet** - not yet on devnet or mainnet. And it uses original Poseidon, not Poseidon2.
-
-### Compile and test the circuit
+### Compile and test
 
 ```bash
 cd circuits/hasher
@@ -122,11 +52,15 @@ nargo compile
 nargo test
 ```
 
-## Update program to use commitments
+---
 
-Now update the Solana program to use commitments instead of public addresses.
+## Program Updates
 
-### 1. Update the deposit function signature
+Now update the Solana program to accept commitments instead of recording depositor addresses.
+
+### 1. Update deposit function signature
+
+The frontend will now send a commitment instead of us recording who the depositor is.
 
 In `anchor/programs/private_transfers/src/lib.rs`, find:
 
@@ -144,16 +78,16 @@ Replace with:
 ```rust
     pub fn deposit(
         ctx: Context<Deposit>,
-        commitment: [u8; 32],
+        commitment: [u8; 32],  // The hash computed off-chain by the backend
         amount: u64,
     ) -> Result<()> {
 ```
 
+**Why `[u8; 32]`?** Poseidon2 outputs a 256-bit (32-byte) hash. This is the commitment that hides the depositor's identity.
+
 ### 2. Add next_leaf_index to Pool struct
 
-We need to track which "slot" in our Merkle tree the next deposit goes into.
-
-> 💡 **Solana Reminder**: Adding fields to an account increases its size. With `#[derive(InitSpace)]`, Anchor calculates this automatically.
+We need to track which "slot" in our Merkle tree each deposit goes into. This becomes important in Step 3.
 
 Find:
 
@@ -170,10 +104,12 @@ Replace with:
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    pub next_leaf_index: u64,
+    pub next_leaf_index: u64,  // Tracks position in Merkle tree (0, 1, 2, ...)
 ```
 
-### 3. Update the DepositEvent
+### 3. Update DepositEvent
+
+This is the key change - instead of storing who deposited, we store the commitment.
 
 Find:
 
@@ -188,12 +124,14 @@ pub struct DepositEvent {
 Replace with:
 
 ```rust
+#[event]
 pub struct DepositEvent {
-    pub commitment: [u8; 32],  // The hash hiding nullifier, secret, and amount
-    pub leaf_index: u64,       // Position in the Merkle tree (0, 1, 2, ...)
-    pub timestamp: i64,        // When the deposit occurred (Unix timestamp)
-    // new_root will be added in Step 3
+    pub commitment: [u8; 32],  // The hash - hides who deposited
+    pub leaf_index: u64,       // Position in Merkle tree (needed for withdrawal proof)
+    pub timestamp: i64,
 ```
+
+**Why leaf_index?** When the user withdraws later, they need to know which position in the Merkle tree their deposit is at. The backend uses this to compute the Merkle proof.
 
 ### 4. Update the emit! in deposit function
 
@@ -216,22 +154,21 @@ Find:
 Replace with:
 
 ```rust
-        // Store the current leaf index before incrementing
+        // Save the current leaf index before incrementing
         let leaf_index = pool.next_leaf_index;
 
         // Emit event with commitment instead of depositor address
         emit!(DepositEvent {
-            commitment,                              // The hash - no identity revealed!
-            leaf_index,                              // Which slot in the tree
-            timestamp: Clock::get()?.unix_timestamp, // Current time
-            // new_root will be added in Step 3
+            commitment,
+            leaf_index,
+            timestamp: Clock::get()?.unix_timestamp,
         });
 
-        pool.next_leaf_index += 1;  // Move to next slot for future deposits
-        pool.total_deposits += 1;   // Track total number of deposits
+        pool.next_leaf_index += 1;  // Next deposit goes in next slot
+        pool.total_deposits += 1;
 ```
 
-### 5. Initialize next_leaf_index in initialize
+### 5. Initialize next_leaf_index
 
 Find:
 
@@ -245,7 +182,7 @@ Replace with:
 
 ```rust
         pool.total_deposits = 0;
-        pool.next_leaf_index = 0;
+        pool.next_leaf_index = 0;  // First deposit goes in slot 0
 ```
 
 ### 6. Update the log message
@@ -269,44 +206,20 @@ cd anchor
 anchor build
 ```
 
+---
+
 ## What Changed
 
-Before, the deposit event showed:
+**Before:** The deposit event showed `{ depositor: "Alice_pubkey", amount: 1000000 }`
 
-```
-{ depositor: "Alice's_public_key", amount: 1000000 }
-```
+**After:** The deposit event shows `{ commitment: "0x7a3b...", leaf_index: 0 }`
 
-Now it shows:
+The depositor's identity is hidden. The only way to link a commitment to a person is to know the nullifier and secret that produced it.
 
-```
-{ commitment: "0x7a3b...", leaf_index: 0, amount: 1000000 }
-```
-
-The depositor's identity is completely hidden. The only way to know who made a deposit is to know the `nullifier` and `secret` that produce that commitment.
-
-![image](./assets/before_after_privacy_explorer.png)
-
-## Deposit Notes
-
-When a user deposits, they save their `nullifier`, `secret`, and `amount` locally - this is called a **deposit note**. It's like a receipt they need to withdraw later. If they lose this note, the funds are lost forever.
-
-![image](./assets/deposit_note.png)
-
-## Withdrawals
-
-How do we withdraw? We can't just say "I want to withdraw commitment X" - that would reveal which deposit is ours.
-
-We need a way to prove we know a valid commitment without revealing which one. That's where nullifiers come in.
-
-## What we learned in this step
-
-| Concept      | Description                                          |
-| ------------ | ---------------------------------------------------- |
-| Commitment   | `Hash(nullifier, secret, amount)` - one-way function |
-| Poseidon     | ZK-friendly hash function                            |
-| Deposit Note | User's receipt containing nullifier, secret, amount  |
+---
 
 ## Next Step
+
+We can deposit privately now, but anyone could withdraw multiple times. We need nullifiers to prevent double-spending.
 
 Continue to [Step 2: Nullifiers](./step-2-nullifiers.md).

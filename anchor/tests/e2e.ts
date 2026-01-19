@@ -24,7 +24,7 @@ import {
 
 const API_URL = "http://localhost:4001";
 const SUNSPOT_VERIFIER_ID = new PublicKey(
-  "CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ"
+  "Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV"
 );
 
 interface DepositNote {

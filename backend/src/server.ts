@@ -7,6 +7,7 @@ import * as crypto from "crypto";
 import { fileURLToPath } from "url";
 import { createSolanaRpc, address } from "@solana/kit";
 import bs58 from "bs58";
+import { poseidon2Hash } from "@zkpassport/poseidon2";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,33 +21,28 @@ const rpc = createSolanaRpc(DEVNET_ENDPOINT);
 
 const LAMPORTS_PER_SOL = 1_000_000_000n;
 
-const HASHER_DIR = path.resolve(__dirname, "../../circuits/hasher");
-const MERKLE_HASHER_DIR = path.resolve(
-  __dirname,
-  "../../circuits/merkle-hasher"
-);
 const WITHDRAWAL_DIR = path.resolve(__dirname, "../../circuits/withdrawal");
 const SUNSPOT_BIN = process.env.SUNSPOT_BIN || "sunspot";
 
-const PROGRAM_ID = address("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
+const PROGRAM_ID = address("9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M");
 
 const BN254_MODULUS = BigInt(
   "21888242871839275222246405745257275088548364400416034343698204186575808495617"
 );
 const TREE_DEPTH = 10;
 
-// Pre-computed zeros for empty Merkle tree (Poseidon2 hashes)
+// Pre-computed zeros for empty Merkle tree (Poseidon2 hashes using @zkpassport/poseidon2)
 const EMPTY_TREE_ZEROS = [
-  "0x00",
-  "0x228981b886e5effb2c05a6be7ab4a05fde6bf702a2d039e46c87057dd729ef97",
-  "0x2f6a8be8895ea075e9886e26117e7548e47d1a2f2b5cc2c59c12b9cc0d8e59ce",
-  "0x1279f65e8f84160aaa3197fa899787e63fef6b534ce28f13d4de46780c634a3d",
-  "0x0ea5554534bc087eb074801b9d30dec37bac8bcee7d91dd174df44d8c8ccb33c",
-  "0x0939e2e1ac7fa082c6057be7c26f2c5b02a6f4af4689b68c8bf2f17520d40454",
-  "0x22b3ae9d6c2ed095bafefb4a6be76af3220e1ce409c2e0997cd1aa78233e08f6",
-  "0x077307ac8beaee984464a1e8955a43679bc81fe5aeedbfa7e48ea1cf9f22b964",
-  "0x1c4fce8686b33085507decf4a69fc35d7362eddd5e56f501a267c137a8808550",
-  "0x2b8dd4f519cb1722919e2e99428f5c5df73695e09983eb994375ff5b793ba34f",
+  "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "0x0b63a53787021a4a962a452c2921b3663aff1ffd8d5510540f8e659e782956f1",
+  "0x0e34ac2c09f45a503d2908bcb12f1cbae5fa4065759c88d501c097506a8b2290",
+  "0x21f9172d72fdcdafc312eee05cf5092980dda821da5b760a9fb8dbdf607c8a20",
+  "0x2373ea368857ec7af97e7b470d705848e2bf93ed7bef142a490f2119bcf82d8e",
+  "0x120157cfaaa49ce3da30f8b47879114977c24b266d58b0ac18b325d878aafddf",
+  "0x01c28fe1059ae0237b72334700697bdf465e03df03986fe05200cadeda66bd76",
+  "0x2d78ed82f93b61ba718b17c2dfe5b52375b4d37cbbed6f1fc98b47614b0cf21b",
+  "0x067243231eddf4222f3911defbba7705aff06ed45960b27f6f91319196ef97e1",
+  "0x1849b85f3c693693e732dfc4577217acc18295193bede09ce8b97ad910310972",
 ];
 
 async function getNextLeafIndex(): Promise<number> {
@@ -115,6 +111,7 @@ function generateRandomField(): bigint {
   return value;
 }
 
+// Compute commitment and nullifier hash using JavaScript Poseidon2
 function computeHashes(
   nullifier: bigint,
   secret: bigint,
@@ -123,43 +120,40 @@ function computeHashes(
   commitment: string;
   nullifierHash: string;
 } {
-  const proverToml = `nullifier = "${nullifier}"
-secret = "${secret}"
-amount = "${amount}"
-`;
-  fs.writeFileSync(path.join(HASHER_DIR, "Prover.toml"), proverToml);
+  // commitment = Poseidon2(nullifier, secret, amount)
+  const commitment = poseidon2Hash([nullifier, secret, amount]);
+  const commitmentHex = "0x" + commitment.toString(16).padStart(64, "0");
 
-  const result = execSync("nargo execute 2>&1", {
-    cwd: HASHER_DIR,
-    encoding: "utf-8",
-  });
-
-  const outputMatch = result.match(/Circuit output: \(([^,]+),\s*([^)]+)\)/);
-  if (!outputMatch) {
-    throw new Error(`Failed to parse hasher output: ${result}`);
-  }
+  // nullifier_hash = Poseidon2(nullifier)
+  const nullifierHash = poseidon2Hash([nullifier]);
+  const nullifierHashHex = "0x" + nullifierHash.toString(16).padStart(64, "0");
 
   return {
-    commitment: outputMatch[1].trim(),
-    nullifierHash: outputMatch[2].trim(),
+    commitment: commitmentHex,
+    nullifierHash: nullifierHashHex,
   };
 }
 
+// Compute Merkle root using JavaScript Poseidon2
 function computeMerkleRoot(commitment: string, leafIndex: number): string {
-  const proverToml = `leaf = "${commitment}"\nleaf_index = "${leafIndex}"\n`;
-  fs.writeFileSync(path.join(MERKLE_HASHER_DIR, "Prover.toml"), proverToml);
+  const leaf = BigInt(commitment);
+  let current = leaf;
+  let idx = leafIndex;
 
-  const result = execSync("nargo execute 2>&1", {
-    cwd: MERKLE_HASHER_DIR,
-    encoding: "utf-8",
-  });
+  for (let i = 0; i < TREE_DEPTH; i++) {
+    const sibling = BigInt(EMPTY_TREE_ZEROS[i]);
+    const isRight = (idx & 1) === 1;
 
-  const outputMatch = result.match(/Circuit output: (0x[a-fA-F0-9]+)/);
-  if (!outputMatch) {
-    throw new Error(`Failed to parse merkle-hasher output: ${result}`);
+    if (isRight) {
+      current = poseidon2Hash([sibling, current]);
+    } else {
+      current = poseidon2Hash([current, sibling]);
+    }
+
+    idx = idx >> 1;
   }
 
-  return outputMatch[1];
+  return "0x" + current.toString(16).padStart(64, "0");
 }
 
 function pubkeyToField(pubkeyBase58: string): string {
@@ -297,6 +291,7 @@ app.post("/api/deposit", async (req, res) => {
     const secret = generateRandomField();
     const amountBigInt = BigInt(amount);
 
+    // Compute hashes using JavaScript Poseidon2 (no nargo needed!)
     const hashes = computeHashes(nullifier, secret, amountBigInt);
     const merkleRoot = computeMerkleRoot(hashes.commitment, leafIndex);
 

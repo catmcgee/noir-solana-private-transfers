@@ -3,19 +3,18 @@ use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
 use anchor_lang::system_program;
 
-declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
+declare_id!("9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M");
 
-pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ");
+pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV");
 pub const TREE_DEPTH: usize = 10;
 pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH;
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000;
 pub const ROOT_HISTORY_SIZE: usize = 10;
 
+// Empty tree root using Poseidon2 (noir-lang/poseidon compatible with @zkpassport/poseidon2)
 pub const EMPTY_ROOT: [u8; 32] = [
-    0x2c, 0xb2, 0x57, 0x0a, 0x37, 0x3a, 0x05, 0x5f,
-    0x49, 0x3d, 0xc4, 0xf1, 0x14, 0x5b, 0x27, 0x61,
-    0x62, 0x3e, 0x59, 0x12, 0x42, 0x08, 0x3b, 0x38,
-    0x21, 0xaa, 0x3b, 0x48, 0x9d, 0x15, 0x3c, 0x06,
+    0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35, 0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
+    0xe2, 0x45, 0x42, 0xff, 0xb9, 0xe7, 0xb2, 0x93, 0xdf, 0xce, 0x30, 0x42, 0xeb, 0x10, 0x46, 0x86,
 ];
 
 #[program]
@@ -81,7 +80,11 @@ pub mod private_transfers {
         pool.next_leaf_index += 1;
         pool.total_deposits += 1;
 
-        msg!("Deposit successful: {} lamports at leaf index {}", amount, leaf_index);
+        msg!(
+            "Deposit successful: {} lamports at leaf index {}",
+            amount,
+            leaf_index
+        );
         Ok(())
     }
 
@@ -133,7 +136,11 @@ pub mod private_transfers {
         nullifier_set.mark_nullifier_used(nullifier_hash)?;
 
         let pool_key = pool.key();
-        let seeds = &[b"vault".as_ref(), pool_key.as_ref(), &[ctx.bumps.pool_vault]];
+        let seeds = &[
+            b"vault".as_ref(),
+            pool_key.as_ref(),
+            &[ctx.bumps.pool_vault],
+        ];
         let signer_seeds = &[&seeds[..]];
 
         let cpi_context = CpiContext::new_with_signer(

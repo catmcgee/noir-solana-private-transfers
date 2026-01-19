@@ -1,546 +1,404 @@
-# Step 6: Demo & Client side
+# Step 6: Demo
 
 ## Goal
 
-See the complete privacy flow in action and understand the Solana client-side code that powers it.
+Run the complete privacy flow and understand how Solana Kit connects everything together.
 
-## Run the Demo
+## Where We Are
 
+```
+✅ Step 0: Understand the architecture
+✅ Step 1: Hide deposit details
+✅ Step 2: Prove membership
+✅ Step 3: Prevent double-spending
+✅ Step 4: The ZK circuit
+✅ Step 5: On-chain verification
+🔲 Step 6: Demo                      ← You are here
+```
+
+---
+
+## The Frontend Stack
+
+This app uses the new **Solana Kit** - a modern TypeScript SDK that replaces the older `@solana/web3.js`.
+
+| Package | Purpose |
+|---------|---------|
+| `@solana/kit` | Core utilities (addresses, PDAs, encoders) |
+| `@solana/client` | RPC client and wallet discovery |
+| `@solana/react-hooks` | React hooks for wallet state and transactions |
+| `codama` | Generates TypeScript clients from Anchor IDL |
+
+---
+
+## Understanding the Code
+
+### 1. Client Setup (`App.tsx`)
+
+```typescript
+import { createClient, autoDiscover } from '@solana/client'
+import { SolanaProvider, useWalletConnection } from '@solana/react-hooks'
+
+const client = createClient({
+  endpoint: 'https://api.devnet.solana.com',
+  walletConnectors: autoDiscover(),  // Finds installed wallets (Phantom, etc.)
+})
+
+function App() {
+  return (
+    <SolanaProvider client={client}>
+      <MainApp />
+    </SolanaProvider>
+  )
+}
+```
+
+**What's happening:**
+- `createClient` creates a connection to Solana with wallet support
+- `autoDiscover()` automatically detects installed browser wallets
+- `SolanaProvider` makes the client available to all child components
+- `useWalletConnection()` gives access to the connected wallet
+
+---
+
+### 2. Computing PDAs (`DepositSection.tsx`)
+
+PDAs (Program Derived Addresses) are deterministic addresses derived from seeds:
+
+```typescript
+import { getProgramDerivedAddress, getBytesEncoder, getAddressEncoder } from '@solana/kit'
+
+// Pool PDA: derived from just "pool"
+const [poolPda] = await getProgramDerivedAddress({
+  programAddress: PRIVATE_TRANSFERS_PROGRAM_ADDRESS,
+  seeds: [getBytesEncoder().encode(new Uint8Array([112, 111, 111, 108]))],  // "pool"
+})
+
+// Vault PDA: derived from "vault" + pool address
+const [poolVaultPda] = await getProgramDerivedAddress({
+  programAddress,
+  seeds: [
+    getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])),  // "vault"
+    getAddressEncoder().encode(poolPda),  // Pool address as second seed
+  ],
+})
+```
+
+**Key points:**
+- PDAs are computed the same way on-chain (Rust) and off-chain (TypeScript)
+- `getBytesEncoder()` encodes raw bytes (for string seeds)
+- `getAddressEncoder()` encodes Solana addresses (32 bytes)
+- These must match the `seeds = [...]` in your Anchor program
+
+---
+
+### 3. Generated Code with Codama
+
+Codama reads your Anchor IDL and generates type-safe TypeScript:
+
+```typescript
+import {
+  getDepositInstructionDataEncoder,
+  PRIVATE_TRANSFERS_PROGRAM_ADDRESS
+} from '../generated'
+
+// Encode instruction data with type safety
+const dataEncoder = getDepositInstructionDataEncoder()
+const instructionData = dataEncoder.encode({
+  commitment: new Uint8Array(onChainData.commitment),
+  newRoot: new Uint8Array(onChainData.newRoot),
+  amount: BigInt(onChainData.amount),
+})
+```
+
+**What Codama generates:**
+- `getDepositInstructionDataEncoder()` - Serializes deposit args
+- `getWithdrawInstructionDataEncoder()` - Serializes withdraw args
+- `PRIVATE_TRANSFERS_PROGRAM_ADDRESS` - Your program's address
+- Type definitions matching your Anchor structs
+
+To regenerate after IDL changes:
 ```bash
 cd frontend
+bun run generate
+```
+
+---
+
+### 4. Building Instructions
+
+Solana instructions have three parts: program, accounts, and data:
+
+```typescript
+const depositInstruction = {
+  programAddress: PRIVATE_TRANSFERS_PROGRAM_ADDRESS,
+  accounts: [
+    { address: poolPda, role: 1 },        // role 1 = writable
+    { address: poolVaultPda, role: 1 },   // role 1 = writable
+    { address: walletAddress, role: 3 },  // role 3 = writable + signer
+    { address: SYSTEM_PROGRAM_ID, role: 0 }, // role 0 = readonly
+  ],
+  data: instructionData,
+}
+```
+
+**Account roles:**
+
+| Role | Meaning | Example |
+|------|---------|---------|
+| 0 | Read-only | System program, verifier |
+| 1 | Writable | Pool, vault (state changes) |
+| 2 | Signer | - |
+| 3 | Writable + Signer | Depositor (pays + signs) |
+
+---
+
+### 5. Compute Budget for ZK Verification
+
+ZK proof verification is expensive. We need to request more compute:
+
+```typescript
+import { address } from '@solana/kit'
+
+const COMPUTE_BUDGET_PROGRAM_ID = address('ComputeBudget111111111111111111111111111111')
+const ZK_VERIFY_COMPUTE_UNITS = 1_400_000  // 1.4M units
+
+// Build ComputeBudget instruction manually
+const computeBudgetData = new Uint8Array(5)
+computeBudgetData[0] = 2  // SetComputeUnitLimit instruction
+new DataView(computeBudgetData.buffer).setUint32(1, ZK_VERIFY_COMPUTE_UNITS, true)
+
+const computeBudgetInstruction = {
+  programAddress: COMPUTE_BUDGET_PROGRAM_ID,
+  accounts: [],
+  data: computeBudgetData,
+}
+
+// Send BOTH instructions in one transaction
+await sendTransaction({
+  instructions: [computeBudgetInstruction, withdrawInstruction],
+})
+```
+
+**Why 1.4M units?**
+- Default Solana compute limit is 200,000 units
+- Groth16 verification requires ~1M+ units
+- We request 1.4M to have headroom
+- This costs a few extra lamports in fees
+
+---
+
+### 6. Sending Transactions
+
+The `useSendTransaction` hook handles signing and confirmation:
+
+```typescript
+import { useSendTransaction } from '@solana/react-hooks'
+
+function DepositSection() {
+  const { send: sendTransaction, isSending } = useSendTransaction()
+
+  const handleDeposit = async () => {
+    const result = await sendTransaction({
+      instructions: [depositInstruction],
+    })
+    // result contains the transaction signature
+  }
+}
+```
+
+**What happens internally:**
+1. Hook builds a transaction message from instructions
+2. Gets recent blockhash from RPC
+3. Prompts wallet to sign
+4. Sends to network
+5. Waits for confirmation
+
+---
+
+## Start the Application
+
+### 1. Start the Backend
+
+The backend handles ZK operations (hashing, proof generation).
+
+```bash
+cd backend
+bun install
 bun run dev
 ```
 
-Open http://localhost:3000 in your browser.
+The backend runs on `http://localhost:4001`.
+
+### 2. Start the Frontend
+
+```bash
+cd frontend
+bun install
+bun run dev
+```
+
+Open `http://localhost:3000` in your browser.
 
 ---
 
 ## Part 1: Connect Wallet
 
-Click the **Connect Wallet** button in the top right.
+Click **Connect Wallet** in the top right.
 
-### What's happening in the code
-
-```typescript
-// App.tsx
-import { createClient, autoDiscover } from "@solana/client";
-import { SolanaProvider, useWalletConnection } from "@solana/react-hooks";
-
-const client = createClient({
-  endpoint: DEVNET_ENDPOINT,
-  walletConnectors: autoDiscover(),
-});
-
-function AppProviders({ children }: { children: ReactNode }) {
-  return <SolanaProvider client={client}>{children}</SolanaProvider>;
-}
-```
-
-**Key Solana concepts:**
-
-| Concept               | What it does                                                       |
-| --------------------- | ------------------------------------------------------------------ |
-| `createClient`        | Creates an RPC client that talks to Solana nodes                   |
-| `autoDiscover()`      | Finds wallet extensions (Phantom, Solflare, etc.) in your browser  |
-| `SolanaProvider`      | React context that gives all child components access to the client |
-| `useWalletConnection` | Hook to access the connected wallet                                |
-
-The `endpoint` is the Solana RPC URL. We use devnet for testing:
-
-```typescript
-// constants.ts
-export const DEVNET_ENDPOINT = "https://api.devnet.solana.com";
-```
-
-- **Localnet**: Local validator, data resets when you stop it
-- **Devnet**: Persistent test network, free SOL from faucets
-- **Mainnet**: Real money, don't deploy this project here as it is for demo purposes only
+Make sure you're on **devnet** and have some SOL (use a faucet if needed).
 
 ---
 
 ## Part 2: Deposit
 
-Enter an amount (e.g., 0.1 SOL) and click **Deposit**.
+1. Enter an amount (e.g., 0.1 SOL)
+2. Click **Deposit**
+3. Approve the transaction in your wallet
 
-### Step 2.1: Call the Backend API
-
-```typescript
-// DepositSection.tsx
-const response = await fetch(`${API_URL}/api/deposit`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    amount: amountLamports,
-    depositor: walletAddress,
-  }),
-});
-
-const { depositNote, onChainData }: DepositApiResponse = await response.json();
-```
-
-The ZK operations (hashing, proving) run via Noir CLI commands. This will be able to happen directly in the brwowser soon - Sunspot is developing a client-side library.
-
-The backend:
-
-1. Generates random `nullifier` and `secret`
-2. Runs `nargo execute` to compute Poseidon2 hashes
-3. Returns a `depositNote` (for the user to save) and `onChainData` (for the transaction)
-
-```typescript
-// backend/src/server.ts - deposit endpoint
-app.post("/api/deposit", async (req, res) => {
-  const { amount } = req.body;
-  const leafIndex = await getNextLeafIndex();
-
-  // Generate random field elements for nullifier and secret
-  const nullifier = generateRandomField();
-  const secret = generateRandomField();
-
-  // Compute commitment and nullifier_hash via Noir circuit
-  const hashes = computeHashes(nullifier, secret, BigInt(amount));
-  const merkleRoot = computeMerkleRoot(hashes.commitment, leafIndex);
-
-  // Return deposit note (user saves this) + onchain data
-  const depositNote = {
-    nullifier: nullifier.toString(),
-    secret: secret.toString(),
-    amount: amount.toString(),
-    commitment: hashes.commitment,
-    nullifierHash: hashes.nullifierHash,
-    merkleRoot: merkleRoot,
-    leafIndex: leafIndex,
-  };
-
-  res.json({ depositNote, onChainData: { commitment, newRoot, amount } });
-});
-```
-
-The `computeHashes` function writes inputs to `Prover.toml` and runs the Noir hasher circuit:
-
-```typescript
-// backend/src/server.ts
-function computeHashes(nullifier: bigint, secret: bigint, amount: bigint) {
-  const proverToml = `nullifier = "${nullifier}"
-secret = "${secret}"
-amount = "${amount}"`;
-  fs.writeFileSync(path.join(HASHER_DIR, "Prover.toml"), proverToml);
-
-  const result = execSync("nargo execute 2>&1", { cwd: HASHER_DIR });
-  // Parse output: commitment and nullifier_hash
-  // ...
-}
-```
-
-### Step 2.2: Derive PDAs (Program Derived Addresses)
-
-```typescript
-// DepositSection.tsx
-import {
-  getProgramDerivedAddress,
-  getBytesEncoder,
-  getAddressEncoder,
-} from "@solana/kit";
-
-const [poolPda] = await getProgramDerivedAddress({
-  programAddress,
-  seeds: [getBytesEncoder().encode(SEEDS.POOL)],
-});
-
-const [poolVaultPda] = await getProgramDerivedAddress({
-  programAddress,
-  seeds: [
-    getBytesEncoder().encode(SEEDS.VAULT),
-    getAddressEncoder().encode(poolPda),
-  ],
-});
-```
-
-**PDAs explained:**
-
-PDAs are special addresses that programs can "own" and sign for. They're derived deterministically from:
-
-- The program's address
-- A list of "seeds" (arbitrary bytes)
+**What happens behind the scenes:**
 
 ```
-PDA = hash(seeds + program_id + "PDA")
+1. Frontend calls POST /api/deposit with amount
+2. Backend generates random nullifier + secret (32 bytes each)
+3. Backend computes commitment = Poseidon2(nullifier, secret, amount)
+4. Backend computes new Merkle root with this commitment
+5. Backend returns deposit note + on-chain data
+6. Frontend computes PDAs (pool, vault)
+7. Frontend encodes instruction data via Codama
+8. Frontend builds transaction with deposit instruction
+9. Wallet signs, transaction sent to Solana
+10. Program stores root, emits event with commitment
 ```
 
-| PDA            | Seeds                | Purpose                                         |
-| -------------- | -------------------- | ----------------------------------------------- |
-| `poolPda`      | `["pool"]`           | Stores Merkle root, leaf count, deposit history |
-| `poolVaultPda` | `["vault", poolPda]` | Holds the deposited SOL                         |
-
-**Why PDAs?**
-
-- Normal accounts need a private key to sign
-- Programs don't have private keys
-- PDAs let programs control accounts without keys
-
-The seeds in our code:
-
-```typescript
-// constants.ts
-export const SEEDS = {
-  POOL: new Uint8Array([112, 111, 111, 108]),           // "pool"
-  VAULT: new Uint8Array([118, 97, 117, 108, 116]),     // "vault"
-  NULLIFIERS: new Uint8Array([110, 117, 108, 108, ...]), // "nullifiers"
-}
-```
-
-### Step 2.3: Encode the instruction data
-
-```typescript
-// DepositSection.tsx
-import { getDepositInstructionDataEncoder } from "../generated";
-
-const dataEncoder = getDepositInstructionDataEncoder();
-const instructionData = dataEncoder.encode({
-  commitment: new Uint8Array(onChainData.commitment),
-  newRoot: new Uint8Array(onChainData.newRoot),
-  amount: BigInt(onChainData.amount),
-});
-```
-
-Solana instructions have a specific binary format. The encoder converts our JavaScript objects into bytes that the on-chain program can parse.
-
-This encoder is **auto-generated from the IDL** using Codama. The IDL (Interface Definition Language) describes your program's instructions and accounts.
-
-The instruction data layout:
-
-```
-| discriminator (8 bytes) | commitment (32 bytes) | newRoot (32 bytes) | amount (8 bytes) |
-```
-
-The **discriminator** is a hash of the instruction name - it tells the program which instruction you're calling.
-
-### Step 2.4: Build the Instruction
-
-```typescript
-// DepositSection.tsx
-const depositInstruction = {
-  programAddress,
-  accounts: [
-    { address: poolPda, role: 1 }, // WritableAccount
-    { address: poolVaultPda, role: 1 }, // WritableAccount
-    { address: walletAddress, role: 3 }, // WritableSigner
-    { address: SYSTEM_PROGRAM_ID, role: 0 }, // ReadonlyAccount
-  ],
-  data: instructionData,
-};
-```
-
-**Solana's account model:**
-
-Every instruction specifies which accounts it touches. Each account has a role:
-
-| Role            | Value | Meaning                 |
-| --------------- | ----- | ----------------------- |
-| ReadonlyAccount | 0     | Can read, cannot write  |
-| WritableAccount | 1     | Can read and write      |
-| ReadonlySigner  | 2     | Must sign, cannot write |
-| WritableSigner  | 3     | Must sign, can write    |
-
-**Why do we need to list accounts?**
-
-- Solana's runtime parallelizes transactions
-- It needs to know which accounts each transaction touches
-- Transactions touching different accounts run in parallel
-- Transactions touching the same writable account run sequentially
-
-### Step 2.5: Send the Transaction
-
-```typescript
-// DepositSection.tsx
-import { useSendTransaction } from "@solana/react-hooks";
-
-const { send: sendTransaction, isSending } = useSendTransaction();
-
-const result = await sendTransaction({
-  instructions: [depositInstruction],
-});
-```
-
-**What `sendTransaction` does:**
-
-1. Builds a transaction from your instructions
-2. Fetches a recent blockhash (transactions expire after ~60 seconds)
-3. Prompts the wallet to sign
-4. Submits to the network
-5. Waits for confirmation
-
-When complete, a **deposit note** appears. This contains your secrets that you need to withdraw
+**Save your deposit note!** You need it to withdraw. If you lose it, your funds are gone forever.
 
 ---
 
 ## Part 3: Switch Wallets
 
-Switch to a completely different wallet in Phantom. This simulates Alice depositing and Bob withdrawing.
+Switch to a **different wallet** in Phantom (or your wallet extension).
+
+This simulates Alice depositing and Bob withdrawing - two different people.
 
 ---
 
 ## Part 4: Withdraw
 
-Paste the deposit note and click **Withdraw**.
+1. Paste the deposit note from earlier
+2. Click **Withdraw**
+3. Wait ~30 seconds for proof generation
+4. Approve the transaction in your wallet
 
-### Step 4.1: Generate the ZK Proof (Backend)
+**What happens behind the scenes:**
 
-```typescript
-// WithdrawSection.tsx
-const response = await fetch(`${API_URL}/api/withdraw`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ depositNote, recipient, payer: walletAddress }),
-});
-
-const { withdrawalProof }: WithdrawApiResponse = await response.json();
 ```
-
-This takes ~30 seconds. The backend:
-
-1. Reconstructs the Merkle proof
-2. Writes all inputs to `Prover.toml`
-3. Runs `nargo execute` to generate a witness
-4. Runs `sunspot prove` to generate a Groth16 proof (256 bytes)
-
-```typescript
-// backend/src/server.ts - withdraw endpoint
-app.post("/api/withdraw", (req, res) => {
-  const { depositNote, recipient } = req.body;
-
-  // Get Merkle proof (siblings at each level)
-  const { proof: merkleProof, isEven } = getMerkleProof(depositNote.leafIndex);
-
-  // Write all circuit inputs to Prover.toml
-  writeProverToml(
-    depositNote.nullifier,
-    depositNote.secret,
-    depositNote.amount,
-    depositNote.nullifierHash,
-    pubkeyToField(recipient),
-    depositNote.merkleRoot,
-    merkleProof,
-    isEven
-  );
-
-  // Generate ZK proof (~30 seconds)
-  const { proof, publicWitness } = generateProof();
-
-  res.json({ withdrawalProof: { proof, nullifierHash, merkleRoot, amount } });
-});
+1. Frontend parses deposit note, calls POST /api/withdraw
+2. Backend retrieves Merkle tree from stored state
+3. Backend computes Merkle proof path using leaf_index
+4. Backend writes all inputs to Prover.toml
+5. Backend runs `nargo execute` → generates witness (~5 sec)
+6. Backend runs `sunspot prove` → generates 256-byte proof (~25 sec)
+7. Frontend computes PDAs (pool, nullifier_set, vault)
+8. Frontend encodes instruction data via Codama
+9. Frontend builds ComputeBudget instruction (1.4M units)
+10. Frontend builds withdraw instruction with proof
+11. Wallet signs, transaction sent to Solana
+12. Program checks nullifier not used
+13. Program checks root exists in history
+14. Program calls Sunspot verifier via CPI
+15. Verifier validates Groth16 proof
+16. Program marks nullifier used, transfers SOL
 ```
-
-The `generateProof` function runs the Noir and Sunspot CLI:
-
-```typescript
-// backend/src/server.ts
-function generateProof(): { proof: Buffer; publicWitness: Buffer } {
-  // Generate witness from circuit inputs
-  execSync("nargo execute", { cwd: WITHDRAWAL_DIR });
-
-  // Generate Groth16 proof using Sunspot
-  execSync(
-    `sunspot prove target/withdrawal.json target/withdrawal.gz target/withdrawal.ccs target/withdrawal.pk`,
-    { cwd: WITHDRAWAL_DIR }
-  );
-
-  // Read the 256-byte proof
-  const proof = fs.readFileSync(
-    path.join(WITHDRAWAL_DIR, "target/withdrawal.proof")
-  );
-  const publicWitness = fs.readFileSync(
-    path.join(WITHDRAWAL_DIR, "target/withdrawal.pw")
-  );
-
-  return { proof, publicWitness };
-}
-```
-
-### Step 4.2: Derive More PDAs
-
-```typescript
-// WithdrawSection.tsx
-const [poolPda] = await getProgramDerivedAddress({
-  programAddress,
-  seeds: [getBytesEncoder().encode(SEEDS.POOL)],
-});
-
-const [nullifierSetPda] = await getProgramDerivedAddress({
-  programAddress,
-  seeds: [
-    getBytesEncoder().encode(SEEDS.NULLIFIERS),
-    getAddressEncoder().encode(poolPda),
-  ],
-});
-
-const [poolVaultPda] = await getProgramDerivedAddress({
-  programAddress,
-  seeds: [
-    getBytesEncoder().encode(SEEDS.VAULT),
-    getAddressEncoder().encode(poolPda),
-  ],
-});
-```
-
-Withdrawal needs three PDAs:
-
-| PDA               | Purpose                                                  |
-| ----------------- | -------------------------------------------------------- |
-| `poolPda`         | Verify the Merkle root matches                           |
-| `nullifierSetPda` | Check nullifier hasn't been used (prevents double-spend) |
-| `poolVaultPda`    | Transfer SOL from the vault to recipient                 |
-
-### Step 4.3: Request Extra Compute Units
-
-```typescript
-// WithdrawSection.tsx
-const computeBudgetData = new Uint8Array(5);
-computeBudgetData[0] = 2; // SetComputeUnitLimit instruction
-new DataView(computeBudgetData.buffer).setUint32(
-  1,
-  ZK_VERIFY_COMPUTE_UNITS,
-  true
-); // 1.4M units
-
-const computeBudgetInstruction = {
-  programAddress: COMPUTE_BUDGET_PROGRAM_ID,
-  accounts: [] as const,
-  data: computeBudgetData,
-};
-```
-
-**Compute units explained:**
-
-Solana limits how much work a transaction can do. Default: 200,000 compute units.
-
-ZK proof verification is expensive - Groth16 needs ~1.4 million compute units. We request more via the **Compute Budget Program**.
-
-```typescript
-// constants.ts
-export const COMPUTE_BUDGET_PROGRAM_ID = address(
-  "ComputeBudget111111111111111111111111111111"
-);
-export const ZK_VERIFY_COMPUTE_UNITS = 1_400_000;
-```
-
-### Step 4.4: Build the Withdraw Instruction
-
-```typescript
-// WithdrawSection.tsx
-const withdrawDataEncoder = getWithdrawInstructionDataEncoder();
-const instructionData = withdrawDataEncoder.encode({
-  proof, // 256-byte Groth16 proof
-  nullifierHash, // 32 bytes
-  root, // 32 bytes
-  recipient: recipientAddress,
-  amount: amountBN,
-});
-
-const withdrawInstruction = {
-  programAddress,
-  accounts: [
-    { address: poolPda, role: 1 },
-    { address: nullifierSetPda, role: 1 },
-    { address: poolVaultPda, role: 1 },
-    { address: recipientAddress, role: 1 },
-    { address: SUNSPOT_VERIFIER_ID, role: 0 },
-    { address: SYSTEM_PROGRAM_ID, role: 0 },
-  ],
-  data: instructionData,
-};
-```
-
-Note the `SUNSPOT_VERIFIER_ID` - this is the on-chain program that verifies ZK proofs:
-
-```typescript
-// constants.ts
-export const SUNSPOT_VERIFIER_ID = address(
-  "CU2Vgym4wiTNcJCuW6r7DV6bCGULJxKdwFjfGfmksSVZ"
-);
-```
-
-### Step 4.5: Send Both Instructions
-
-```typescript
-// WithdrawSection.tsx
-const result = await sendTransaction({
-  instructions: [computeBudgetInstruction, withdrawInstruction],
-});
-```
-
-**Multiple instructions in one transaction:**
-
-Solana transactions can contain multiple instructions. They execute atomically - all succeed or all fail.
-
-Here we send two instructions:
-
-1. `computeBudgetInstruction` - Request 1.4M compute units
-2. `withdrawInstruction` - The actual withdrawal
 
 ---
 
 ## Part 5: Verify on Explorer
 
-Open Solana Explorer and look at both transactions:
+Open [Solana Explorer](https://explorer.solana.com/?cluster=devnet) and look at both transactions:
 
-- **Deposit**: Shows `commitment: 0x7a3b...`
-- **Withdrawal**: Shows `nullifier_hash: 0x9c2f...`
+**Deposit transaction:**
+- Shows `commitment: 0x7a3b...`
+- Shows `leaf_index: 0`
+- No depositor address in the event
+
+**Withdrawal transaction:**
+- Shows `nullifier_hash: 0x9c2f...`
+- Shows `recipient: Bob's_address`
+- No commitment reference
+
+**These cannot be linked.** The commitment and nullifier_hash are cryptographically unrelated without knowing the original nullifier.
+
+---
+
+## Solana Kit vs Legacy web3.js
+
+| Feature | Legacy web3.js | Solana Kit |
+|---------|---------------|------------|
+| Bundle size | ~400KB | ~50KB (tree-shakeable) |
+| TypeScript | Partial | Full type safety |
+| PDAs | `PublicKey.findProgramAddress` | `getProgramDerivedAddress` |
+| Encoding | Manual `Buffer` manipulation | Typed encoders |
+| React | Separate `@solana/wallet-adapter-react` | Built-in `@solana/react-hooks` |
+| Client | `Connection` class | `createClient` factory |
 
 ---
 
 ## What You Built
 
-| Component        | What it does                                          |
-| ---------------- | ----------------------------------------------------- |
-| Commitment       | Hides deposit details in a hash                       |
-| Nullifier        | Prevents double-spend without revealing which deposit |
-| Merkle Tree      | Efficient membership proofs with O(log n) data        |
-| ZK Circuit       | Proves everything without revealing private inputs    |
-| Sunspot Verifier | Trustlessly verifies proofs on Solana                 |
+| Component | Solana Concept | ZK Concept |
+|-----------|---------------|------------|
+| Pool account | PDA with state | - |
+| Vault account | PDA holding SOL | - |
+| Commitment | Event data | Hash hiding deposit |
+| Nullifier set | PDA with Vec storage | Double-spend prevention |
+| Merkle root | Fixed-size array (ring buffer) | Membership proof |
+| Verifier CPI | Cross-program invocation | Groth16 verification |
+| Compute budget | Transaction resource limits | Proof verification cost |
 
 ---
 
 ## Limitations
 
-This is an educational implementation:
+This is educational code:
 
-- **Variable amounts reduce privacy**: Deposits/withdrawals can be correlated by amount
-- **Not audited**: Don't use in production
-- **Limited capacity**: Nullifier set capped at 256 entries in this demo
+- **Variable amounts reduce privacy** - Deposits/withdrawals can be correlated by amount
+- **Not audited** - Don't use with real funds
+- **Limited capacity** - Nullifier set capped at 256 entries
+- **Single deposit assumption** - Full tree indexing not implemented
 
 ---
 
 ## FAQs
 
-**Q: Why Poseidon hash and not SHA256?**
+**Q: Why does proof generation take 30 seconds?**
+Groth16 proving is computationally intensive. It involves many elliptic curve operations. Future optimizations and client-side WASM support will improve this.
 
-Poseidon is designed for ZK circuits. SHA256 would require tens of thousands more constraints, making proofs much slower and more expensive.
-
-**Q: How long does proof generation take?**
-
-About 30 seconds on a laptop. This happens in the backend via `sunspot prove`.
-
-**Q: What's the cost of verification?**
-
-About 1.4 million compute units, which costs a few cents extra in transaction fees.
+**Q: What if I lose my deposit note?**
+Funds are lost forever. The note contains the nullifier and secret - the only proof you made a deposit. There's no recovery mechanism.
 
 **Q: Can the pool operator steal funds?**
+No. Funds can only move with a valid ZK proof. Only the depositor has the nullifier/secret needed to create that proof.
 
-No. Funds can only move with a valid ZK proof, and only the depositor has the nullifier/secret needed to create that proof.
+**Q: How much does a withdrawal cost?**
+About 1.4M compute units, which costs a few extra cents in transaction fees. Still very cheap compared to Ethereum.
 
-**Q: What happens if I lose my deposit note?**
-
-The funds are lost forever. The note contains the secrets needed to withdraw. There's no recovery mechanism.
+**Q: Why use Solana Kit instead of web3.js?**
+Solana Kit is the modern replacement - smaller bundle, better types, and designed for tree-shaking. It's the recommended approach for new projects.
 
 ---
 
 ## Resources
 
-- [Solana Kit Documentation](https://github.com/solana-foundation/kit)
-- [Framework-kit](https://github.com/solana-foundation/framework-kit)
+- [Solana Kit Documentation](https://github.com/solana-foundation/solana-lib)
+- [Codama Documentation](https://github.com/codama-idl/codama)
 - [Noir Documentation](https://noir-lang.org/docs)
 - [Sunspot Repository](https://github.com/reilabs/sunspot)
 
 ---
 
-Congratulations! You've built a complete privacy-preserving transfer system on Solana.
+## Congratulations!
+
+You've built a privacy-preserving transfer system on Solana using modern tooling.
+
+These concepts - commitments, nullifiers, Merkle trees, ZK proofs - combined with Solana Kit, Codama, and Anchor - give you a complete toolkit for building privacy applications on Solana.

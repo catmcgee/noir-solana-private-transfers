@@ -1,4 +1,4 @@
-use dep::poseidon2;
+use dep::poseidon;
 
 global TREE_DEPTH: u32 = 10;
 
@@ -9,7 +9,7 @@ fn main(leaf: Field, leaf_index: pub Field) -> pub Field {
     // Compute zeros for empty subtrees at each level
     let mut zeros: [Field; TREE_DEPTH] = [0; TREE_DEPTH];
     for i in 1..TREE_DEPTH {
-        zeros[i] = poseidon2::bn254::hash_2([zeros[i - 1], zeros[i - 1]]);
+        zeros[i] = poseidon::poseidon2::Poseidon2::hash([zeros[i - 1], zeros[i - 1]], 2);
     }
 
     let mut current = leaf;
@@ -20,9 +20,9 @@ fn main(leaf: Field, leaf_index: pub Field) -> pub Field {
         let sibling = zeros[i];
 
         current = if is_right {
-            poseidon2::bn254::hash_2([sibling, current])
+            poseidon::poseidon2::Poseidon2::hash([sibling, current], 2)
         } else {
-            poseidon2::bn254::hash_2([current, sibling])
+            poseidon::poseidon2::Poseidon2::hash([current, sibling], 2)
         };
 
         idx = idx >> 1;
