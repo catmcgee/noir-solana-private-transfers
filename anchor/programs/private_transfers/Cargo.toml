@@ -28,6 +28,3 @@ litesvm = { workspace = true }
 solana-sdk = { workspace = true }
 sha2 = "0.10"
 
-[[test]]
-name = "litesvm_tests"
-path = "tests/litesvm_tests.rs"
