@@ -1,14 +1,8 @@
 import { useState } from 'react'
 import { useWalletConnection, useSendTransaction } from '@solana/react-hooks'
-// Step 1: You'll use these imports for PDA computation
-// import { getProgramDerivedAddress, getBytesEncoder, getAddressEncoder } from '@solana/kit'
 import { PRIVATE_TRANSFERS_PROGRAM_ADDRESS } from '../generated'
-// Step 1: You'll use this import for encoding instruction data
-// import { getDepositInstructionDataEncoder } from '../generated'
 import { getWalletAddress } from '../utils'
 import { API_URL, LAMPORTS_PER_SOL, DEFAULT_DEPOSIT_AMOUNT } from '../constants'
-// Step 1: You'll use these imports for building the instruction
-// import { SEEDS, SYSTEM_PROGRAM_ID } from '../constants'
 import type { DepositNote, DepositApiResponse } from '../types'
 
 interface DepositSectionProps {
@@ -86,21 +80,18 @@ export function DepositSection({ onDepositComplete, depositNote, onClearNote }: 
       // ============================================================
       // TODO: Implement in Step 1 - Replace this entire block
       // ============================================================
-      // 1. Uncomment the imports at the top of the file
-      // 2. Define programAddress = PRIVATE_TRANSFERS_PROGRAM_ADDRESS
-      // 3. Compute PDAs: poolPda and poolVaultPda
-      // 4. Encode instruction data with getDepositInstructionDataEncoder()
-      // 5. Build depositInstruction with programAddress, accounts, data
-      // 6. Delete this throw statement
+
       console.log('You will use:', { onChainData, programAddress: PRIVATE_TRANSFERS_PROGRAM_ADDRESS })
       throw new Error('TODO: Implement deposit transaction in Step 1. See instructions.')
-      // ============================================================
+
 
       // After implementing, your depositInstruction will be used here:
-      setStatus('Please sign in your wallet...')
+      setStatus('Please sign in with your wallet...')
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const depositInstruction = null as any // Replace with your implementation
+
+      // ============================================================
 
       try {
         const result = await sendTransaction({
@@ -114,7 +105,7 @@ export function DepositSection({ onDepositComplete, depositNote, onClearNote }: 
         } else {
           throw new Error('Transaction failed')
         }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (txError: any) {
         // The @solana/react-hooks can throw errors even when transactions succeed
         // Check if this is a "transaction plan failed" error - the tx may have actually succeeded
@@ -229,11 +220,10 @@ export function DepositSection({ onDepositComplete, depositNote, onClearNote }: 
           </div>
 
           {status && (
-            <div className={`p-3 rounded-lg text-sm ${
-              status.includes('Error')
-                ? 'status-error'
-                : 'status-info'
-            }`}>
+            <div className={`p-3 rounded-lg text-sm ${status.includes('Error')
+              ? 'status-error'
+              : 'status-info'
+              }`}>
               {status}
             </div>
           )}

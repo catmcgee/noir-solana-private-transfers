@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
 use anchor_lang::system_program;
 
@@ -8,6 +9,11 @@ declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
 // Step 5: Add SUNSPOT_VERIFIER_ID here
 
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
+
+pub const EMPTY_ROOT: [u8; 32] = [
+    0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35, 0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
+    0xe2, 0x45, 0x42, 0xff, 0xb9, 0xe7, 0xb2, 0x93, 0xdf, 0xce, 0x30, 0x42, 0xeb, 0x10, 0x46, 0x86,
+];
 
 #[program]
 pub mod private_transfers {
@@ -59,7 +65,11 @@ pub mod private_transfers {
         pool.total_deposits += 1;
         // Step 2: Increment next_leaf_index
 
-        msg!("Public deposit: {} lamports from {}", amount, ctx.accounts.depositor.key());
+        msg!(
+            "Public deposit: {} lamports from {}",
+            amount,
+            ctx.accounts.depositor.key()
+        );
         Ok(())
     }
 
@@ -88,7 +98,11 @@ pub mod private_transfers {
         // Step 3: Mark nullifier as used
 
         let pool_key = ctx.accounts.pool.key();
-        let seeds = &[b"vault".as_ref(), pool_key.as_ref(), &[ctx.bumps.pool_vault]];
+        let seeds = &[
+            b"vault".as_ref(),
+            pool_key.as_ref(),
+            &[ctx.bumps.pool_vault],
+        ];
         let signer_seeds = &[&seeds[..]];
 
         let cpi_context = CpiContext::new_with_signer(
@@ -127,7 +141,6 @@ pub struct Initialize<'info> {
     pub pool: Account<'info, Pool>,
 
     // Step 3: Add nullifier_set account here
-
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -155,7 +168,6 @@ pub struct Withdraw<'info> {
     pub pool: Account<'info, Pool>,
 
     // Step 3: Add nullifier_set account here
-
     #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -164,7 +176,6 @@ pub struct Withdraw<'info> {
     pub recipient: UncheckedAccount<'info>,
 
     // Step 5: Add verifier_program account here
-
     pub system_program: Program<'info, System>,
 }
 
