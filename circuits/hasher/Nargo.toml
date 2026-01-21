@@ -1,9 +1,0 @@
-[package]
-name = "hasher"
-type = "bin"
-authors = [""]
-# NOTE: Requires nargo 1.0.0-beta.13 for Sunspot compatibility
-compiler_version = ">=1.0.0"
-
-[dependencies]
-poseidon2 = { tag = "main", git = "https://github.com/TaceoLabs/noir-poseidon", directory = "poseidon2" }

@@ -1,6 +1,6 @@
 mod merkle_tree;
 
-use dep::poseidon2;
+use dep::poseidon;
 use merkle_tree::compute_merkle_root;
 
 // Merkle tree depth - supports 2^10 = 1024 deposits
@@ -22,9 +22,9 @@ fn main(
     merkle_proof: [Field; TREE_DEPTH],
     is_even: [bool; TREE_DEPTH]
 ) {
-    let commitment = poseidon2::bn254::hash_3([nullifier, secret, amount]);
+    let commitment = poseidon::poseidon2::Poseidon2::hash([nullifier, secret, amount], 3);
 
-    let computed_nullifier_hash = poseidon2::bn254::hash_1([nullifier]);
+    let computed_nullifier_hash = poseidon::poseidon2::Poseidon2::hash([nullifier], 1);
     assert(computed_nullifier_hash == nullifier_hash, "Invalid nullifier hash");
 
     let computed_root = compute_merkle_root(commitment, merkle_proof, is_even);
@@ -35,11 +35,11 @@ fn main(
 }
 
 fn compute_commitment(nullifier: Field, secret: Field, amount: Field) -> Field {
-    poseidon2::bn254::hash_3([nullifier, secret, amount])
+    poseidon::poseidon2::Poseidon2::hash([nullifier, secret, amount], 3)
 }
 
 fn compute_nullifier_hash(nullifier: Field) -> Field {
-    poseidon2::bn254::hash_1([nullifier])
+    poseidon::poseidon2::Poseidon2::hash([nullifier], 1)
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn compute_empty_tree_zeros() -> [Field; TREE_DEPTH] {
 
     for i in 0..TREE_DEPTH {
         zeros[i] = current;
-        current = poseidon2::bn254::hash_2([current, current]);
+        current = poseidon::poseidon2::Poseidon2::hash([current, current], 2);
     }
 
     zeros

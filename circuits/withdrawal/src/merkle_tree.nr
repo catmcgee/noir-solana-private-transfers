@@ -1,4 +1,4 @@
-use dep::poseidon2;
+use dep::poseidon;
 
 /// Computes the Merkle root from a leaf and its proof
 ///
@@ -27,7 +27,7 @@ pub fn compute_merkle_root<let DEPTH: u32>(
             (sibling, current)
         };
 
-        current = poseidon2::bn254::hash_2([left, right]);
+        current = poseidon::poseidon2::Poseidon2::hash([left, right], 2);
     }
 
     current
