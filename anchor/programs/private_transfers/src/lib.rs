@@ -29,6 +29,9 @@ pub mod private_transfers {
         pool.current_root_index = 0;
         pool.roots[0] = EMPTY_ROOT;
 
+        let nullifier_set = &mut ctx.accounts.nullifier_set;
+        nullifier_set.pool = pool.key();
+
         msg!("Pool initialized");
         Ok(())
     }
@@ -78,10 +81,16 @@ pub mod private_transfers {
 
     pub fn withdraw(
         ctx: Context<Withdraw>,
+        nullifier_hash: [u8; 32],
         root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
+        let nullifier_set = &mut ctx.accounts.nullifier_set;
+        require!(
+            !nullifier_set.is_nullifier_used(&nullifier_hash),
+            PrivateTransfersError::NullifierUsed
+        );
         require!(
             ctx.accounts.pool.is_known_root(&root),
             PrivateTransfersError::InvalidRoot
@@ -97,7 +106,7 @@ pub mod private_transfers {
         );
 
         // Step 5: Verify ZK proof via CPI
-        // Step 3: Mark nullifier as used
+        nullifier_set.mark_nullifier_used(nullifier_hash)?;
 
         let pool_key = ctx.accounts.pool.key();
         let seeds = &[
@@ -118,13 +127,17 @@ pub mod private_transfers {
         system_program::transfer(cpi_context, amount)?;
 
         emit!(WithdrawEvent {
+            nullifier_hash,
             recipient: ctx.accounts.recipient.key(),
-            amount,
             timestamp: Clock::get()?.unix_timestamp,
-            // Step 3: Replace amount with nullifier_hash
         });
 
-        msg!("Public withdrawal: {} lamports to {}", amount, recipient);
+        msg!(
+            "Withdrawal: {} lamports to {} with nullifier hash {:?}",
+            amount,
+            recipient,
+            nullifier_hash
+        );
         Ok(())
     }
 }
@@ -142,7 +155,15 @@ pub struct Initialize<'info> {
     )]
     pub pool: Account<'info, Pool>,
 
-    // Step 3: Add nullifier_set account here
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + NullifierSet::INIT_SPACE,
+        seeds = [b"nullifiers", pool.key().as_ref()],
+        bump
+    )]
+    pub nullifier_set: Account<'info, NullifierSet>,
+
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 
@@ -177,6 +198,9 @@ pub struct Withdraw<'info> {
     #[account(mut)]
     pub recipient: UncheckedAccount<'info>,
 
+    #[account(mut, seeds = [b"nullifiers", pool.key().as_ref()], bump)]
+    pub nullifier_set: Account<'info, NullifierSet>,
+
     // Step 5: Add verifier_program account here
     pub system_program: Program<'info, System>,
 }
@@ -197,6 +221,28 @@ impl Pool {
     }
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct NullifierSet {
+    pub pool: Pubkey,
+    #[max_len(256)]
+    pub nullifiers: Vec<[u8; 32]>,
+}
+
+impl NullifierSet {
+    pub fn is_nullifier_used(&self, nullifier_hash: &[u8; 32]) -> bool {
+        self.nullifiers.contains(nullifier_hash)
+    }
+    pub fn mark_nullifier_used(&mut self, nullifier_hash: [u8; 32]) -> Result<()> {
+        require!(
+            self.nullifiers.len() < 256,
+            PrivateTransfersError::NullifierSetFull
+        );
+        self.nullifiers.push(nullifier_hash);
+        Ok(())
+    }
+}
+
 #[event]
 pub struct DepositEvent {
     commitment: [u8; 32],
@@ -207,8 +253,8 @@ pub struct DepositEvent {
 
 #[event]
 pub struct WithdrawEvent {
+    pub nullifier_hash: [u8; 32],
     pub recipient: Pubkey,
-    pub amount: u64,
     pub timestamp: i64,
 }
 
@@ -224,4 +270,8 @@ pub enum PrivateTransfersError {
     TreeFull,
     #[msg("Invalid root")]
     InvalidRoot,
+    #[msg("Nullifier set is full")]
+    NullifierSetFull,
+    #[msg("Nullifier already used")]
+    NullifierUsed,
 }
