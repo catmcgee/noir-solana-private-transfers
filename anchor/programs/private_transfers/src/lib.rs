@@ -5,10 +5,17 @@ use anchor_lang::system_program;
 
 declare_id!("HzEfEnt2E6T6gmy9VQi2d15TN5PYAy78iq7WHPF9ddHB");
 
-// Step 2: Add Merkle tree constants here
-// Step 5: Add SUNSPOT_VERIFIER_ID here
-
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
+
+pub const TREE_DEPTH: usize = 10;
+pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH; // 1024
+pub const ROOT_HISTORY_SIZE: usize = 10;
+
+// Empty tree root using Poseidon2
+pub const EMPTY_ROOT: [u8; 32] = [
+    0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35, 0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
+    0xe2, 0x45, 0x42, 0xff, 0xb9, 0xe7, 0xb2, 0x93, 0xdf, 0xce, 0x30, 0x42, 0xeb, 0x10, 0x46, 0x86,
+];
 
 #[program]
 pub mod private_transfers {
@@ -18,21 +25,30 @@ pub mod private_transfers {
         let pool = &mut ctx.accounts.pool;
         pool.authority = ctx.accounts.authority.key();
         pool.total_deposits = 0;
-        // Step 2: Initialize next_leaf_index, current_root_index, roots[0]
-        // Step 3: Initialize nullifier_set.pool
+        pool.next_leaf_index = 0;
+        pool.current_root_index = 0;
+        pool.roots[0] = EMPTY_ROOT;
 
         msg!("Pool initialized");
         Ok(())
     }
 
-    pub fn deposit(ctx: Context<Deposit>, commitment: [u8; 32], amount: u64) -> Result<()> {
+    pub fn deposit(
+        ctx: Context<Deposit>,
+        commitment: [u8; 32],
+        new_root: [u8; 32],
+        amount: u64,
+    ) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
 
         require!(
             amount >= MIN_DEPOSIT_AMOUNT,
             PrivateTransfersError::DepositTooSmall
         );
-        // Step 2: Add tree full check
+        require!(
+            pool.next_leaf_index < MAX_LEAVES,
+            PrivateTransfersError::TreeFull
+        );
 
         let cpi_context = CpiContext::new(
             *ctx.accounts.system_program.key,
@@ -42,17 +58,19 @@ pub mod private_transfers {
             },
         );
         system_program::transfer(cpi_context, amount)?;
-
-        // Step 2: Save leaf_index, update root history
+        let leaf_index = pool.next_leaf_index;
+        let new_root_index = ((pool.current_root_index + 1) % ROOT_HISTORY_SIZE as u64) as usize;
+        pool.roots[new_root_index] = new_root;
+        pool.current_root_index = new_root_index as u64;
 
         emit!(DepositEvent {
             commitment,
-            amount,
+            leaf_index,
             timestamp: Clock::get()?.unix_timestamp,
+            new_root,
         });
 
         pool.total_deposits += 1;
-        // Step 2: Increment next_leaf_index
 
         msg!("Deposit: {} lamports, commitment: {:?}", amount, commitment);
         Ok(())
@@ -60,15 +78,14 @@ pub mod private_transfers {
 
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        // Step 5: Add proof: Vec<u8>
-        // Step 3: Add nullifier_hash: [u8; 32]
-        // Step 2: Add root: [u8; 32]
+        root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
-        // Step 3: Check nullifier not used
-        // Step 2: Validate root is known
-
+        require!(
+            ctx.accounts.pool.is_known_root(&root),
+            PrivateTransfersError::InvalidRoot
+        );
         require!(
             ctx.accounts.recipient.key() == recipient,
             PrivateTransfersError::RecipientMismatch
@@ -169,18 +186,23 @@ pub struct Withdraw<'info> {
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
-    // Step 2: Add next_leaf_index, current_root_index, roots
+    pub next_leaf_index: u64,
+    pub current_root_index: u64,
+    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE], // array of 10 poseidon hashes
 }
 
-// Step 2: Add is_known_root method to Pool
-// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
+impl Pool {
+    pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
+        self.roots.iter().any(|r| r == root)
+    }
+}
 
 #[event]
 pub struct DepositEvent {
     commitment: [u8; 32],
-    pub amount: u64,
+    pub leaf_index: u64,
+    pub new_root: [u8; 32],
     pub timestamp: i64,
-    // Step 2: Add leaf_index: u64, new_root: [u8; 32]
 }
 
 #[event]
@@ -188,7 +210,6 @@ pub struct WithdrawEvent {
     pub recipient: Pubkey,
     pub amount: u64,
     pub timestamp: i64,
-    // Step 3: Replace amount with nullifier_hash: [u8; 32]
 }
 
 #[error_code]
@@ -199,7 +220,8 @@ pub enum PrivateTransfersError {
     RecipientMismatch,
     #[msg("Insufficient vault balance")]
     InsufficientVaultBalance,
-    // Step 2: Add TreeFull, InvalidRoot
-    // Step 3: Add NullifierUsed, NullifierSetFull
-    // Step 5: Add InvalidVerifier
+    #[msg("Merkle tree is full")]
+    TreeFull,
+    #[msg("Invalid root")]
+    InvalidRoot,
 }
