@@ -29,9 +29,11 @@ cd circuit
 sunspot deploy target/withdrawal.vk
 ```
 
+> Sunspot converts our Noir circuit (compiled to CCS - Customizable Constraint System format) into a Groth16 verifier using Gnark. The .vk file contains the cryptographic parameters specific to our circuit.
+
 This creates:
 - `target/withdrawal.so` - The compiled Solana program
-- `target/withdrawal-keypair.json` - Keypair for deployment
+- `target/withdrawal-keypair.json` - Keypair for deployment (like a wallet for the program - lets us deploy to a specific address and redeploy to the same address later)
 
 ---
 

@@ -82,39 +82,46 @@ Replace with:
       const programAddress = PRIVATE_TRANSFERS_PROGRAM_ADDRESS
 
       // === Compute PDAs ===
+      // PDAs (Program Derived Addresses) are deterministic addresses owned by programs
+      // Same seeds + same program = same address every time
+
       // Pool PDA - seeds: [b"pool"]
-      // getBytesEncoder() returns an encoder that converts Uint8Array to the format needed for PDA seeds
+      // getBytesEncoder() converts strings/arrays to the byte format Solana expects
       const [poolPda] = await getProgramDerivedAddress({
         programAddress,
-        seeds: [getBytesEncoder().encode(SEEDS.POOL)],
+        seeds: [getBytesEncoder().encode(SEEDS.POOL)],  // SEEDS.POOL = "pool"
       })
 
       // Vault PDA - seeds: [b"vault", pool.key()]
+      // getAddressEncoder() converts a Solana address (base58 string) to bytes
       const [poolVaultPda] = await getProgramDerivedAddress({
         programAddress,
         seeds: [
-          getBytesEncoder().encode(SEEDS.VAULT),
-          getAddressEncoder().encode(poolPda),
+          getBytesEncoder().encode(SEEDS.VAULT),  // SEEDS.VAULT = "vault"
+          getAddressEncoder().encode(poolPda),    // The pool's address as bytes
         ],
       })
 
       // === Encode instruction data ===
-      // The encoder knows the exact byte layout your program expects
+      // Codama generates this encoder from your IDL - it knows the exact byte layout
+      // No manual serialization needed!
       const dataEncoder = getDepositInstructionDataEncoder()
       const instructionData = dataEncoder.encode({
         commitment: new Uint8Array(onChainData.commitment),
         newRoot: new Uint8Array(onChainData.newRoot),
-        amount: BigInt(onChainData.amount),
+        amount: BigInt(onChainData.amount),  // BigInt for u64
       })
 
       // === Build the instruction ===
-      // Account roles: 0=readonly, 1=writable, 2=readonly+signer, 3=writable+signer
+      // Account roles (from @solana/kit):
+      // 0 = readonly, 1 = writable, 2 = readonly+signer, 3 = writable+signer
+      // Order must match the Deposit struct in your Anchor program!
       const depositInstruction = {
         programAddress,
         accounts: [
-          { address: poolPda, role: 1 },           // pool: writable
-          { address: poolVaultPda, role: 1 },      // pool_vault: writable
-          { address: walletAddress, role: 3 },     // depositor: writable + signer
+          { address: poolPda, role: 1 },           // pool: writable (we update next_leaf_index)
+          { address: poolVaultPda, role: 1 },      // pool_vault: writable (receives SOL)
+          { address: walletAddress, role: 3 },     // depositor: writable + signer (sends SOL)
           { address: SYSTEM_PROGRAM_ID, role: 0 }, // system_program: readonly
         ],
         data: instructionData,
@@ -148,6 +155,19 @@ Codama generates type-safe encoders from your Anchor IDL. The encoder handles:
 - 8-byte discriminator (identifies which instruction)
 - Field serialization in correct order
 - Proper byte alignment
+
+---
+
+## Initialize the Pool (First Time Only!)
+
+Before any deposits or withdrawals can happen, the pool must be initialized. This creates the Pool and NullifierSet accounts on-chain.
+
+```bash
+cd anchor
+anchor run initialize
+```
+
+> This only needs to run once per deployment. If you redeploy the program, you'll need to initialize again. The initialize instruction creates PDAs for the pool, vault, and nullifier set.
 
 ---
 

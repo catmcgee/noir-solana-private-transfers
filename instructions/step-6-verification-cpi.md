@@ -30,10 +30,12 @@ Replace with:
 
 ```rust
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::Instruction;
-use anchor_lang::solana_program::program::invoke;
+use anchor_lang::solana_program::instruction::Instruction;  // Struct to build CPI calls
+use anchor_lang::solana_program::program::invoke;           // Function to execute CPI
 use anchor_lang::system_program;
 ```
+
+> `Instruction` is just a struct with: program_id, accounts, and data. `invoke` sends that instruction to another program.
 
 ### 2. Add verifier ID constant
 
@@ -95,31 +97,39 @@ fn encode_public_inputs(
     recipient: &Pubkey,
     amount: u64,
 ) -> Vec<u8> {
+    // NR = "number of" - standard abbreviation in cryptographic code
     const NR_PUBLIC_INPUTS: u32 = 4;
-    
+
     // Pre-allocate: 12 bytes header + 4 inputs × 32 bytes each = 140 bytes
+    // We write 12 + 128 instead of 140 to show WHERE the number comes from
+    // Vec::with_capacity pre-allocates memory so we don't resize during extend_from_slice calls
     let mut inputs = Vec::with_capacity(12 + 128);
 
     // === Gnark Header (12 bytes) ===
     // The Gnark verifier expects:
     // - Bytes 0-3:  Number of public inputs (big-endian u32)
     // - Bytes 4-7:  Number of commitments, always 0 for us (big-endian u32)
-    // - Bytes 8-11: Number of public inputs again (big-endian u32)
+    //              (Gnark supports "commitment" schemes but we don't use them - different from our deposit commitments!)
+    // - Bytes 8-11: Number of public inputs again (big-endian u32) - yes, twice, it's the Gnark format
+
+    // extend_from_slice appends a byte slice to our Vec - efficient way to build byte arrays
     inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
-    inputs.extend_from_slice(&0u32.to_be_bytes());
+    inputs.extend_from_slice(&0u32.to_be_bytes());  // 0 commitments
     inputs.extend_from_slice(&NR_PUBLIC_INPUTS.to_be_bytes());
 
     // === Public Inputs (each 32 bytes, big-endian) ===
     // IMPORTANT: Order must exactly match the circuit's public input declaration!
     // Our circuit declares: root, nullifier_hash, recipient, amount
-    
+
     // 1. Merkle root - proves the commitment exists in the tree
     inputs.extend_from_slice(root);
-    
+
     // 2. Nullifier hash - prevents double-spending
     inputs.extend_from_slice(nullifier_hash);
-    
+
     // 3. Recipient pubkey - who receives the funds (32 bytes)
+    // as_ref() converts Pubkey to &[u8] - needed because Pubkey isn't a byte array directly
+    // root and nullifier_hash are already [u8; 32] so they don't need conversion
     inputs.extend_from_slice(recipient.as_ref());
 
     // 4. Amount - padded to 32 bytes (u64 is only 8 bytes)
@@ -153,29 +163,34 @@ Find:
 }
 ```
 
-Addd
+Add below:
 
 ```rust
-   
-    /// Safety: Validated by the constraint that checks it matches SUNSPOT_VERIFIER_ID.
+    // #[account(constraint = ...)] is Anchor's way to add custom validation
+    // The constraint runs BEFORE your instruction code - if it fails, tx reverts
+    // @ PrivateTransfersError::InvalidVerifier sets a custom error message
     #[account(
         constraint = verifier_program.key() == SUNSPOT_VERIFIER_ID @ PrivateTransfersError::InvalidVerifier
     )]
-     /// CHECK: External program without an Anchor IDL in our project.
+    /// CHECK: External program without an Anchor IDL in our project.
     /// We use UncheckedAccount because we can't use Program<'info, SunspotVerifier>
-    /// without importing that program's types.
-    pub verifier_program: UncheckedAccount<'info>, // TYPE THIS FIRST
+    /// without importing that program's types. The constraint above validates it.
+    pub verifier_program: UncheckedAccount<'info>,
 }
 ```
 
-Add error
+> Note on `/// CHECK:` - Anchor requires this comment on every UncheckedAccount to prove you've thought about security. Without it, `anchor build` will fail. Always explain WHY it's safe.
+
+> Note on `#[account(mut)]` for recipient - it's marked mutable because we're transferring SOL TO it. Any account receiving lamports must be writable.
+
+Add error:
 
 ```rust
     #[msg("Invalid verifier program")]
     InvalidVerifier,
 ```
 
-Now our progrram knows about the verifier program
+Now our program knows about the verifier program
 
 ---
 
@@ -219,29 +234,38 @@ Find:
             PrivateTransfersError::InsufficientVaultBalance
         );
 
-        // under here 
+        // under here
 
-       
+
 ```
 
-Add
+Add:
 ```rust
 
         // === Verify ZK proof via CPI ===
         // Encode public inputs in the format the verifier expects
         let public_inputs = encode_public_inputs(&root, &nullifier_hash, &recipient, amount);
-        
-        // Concatenate proof + public inputs (this is what the verifier program reads)
+
+        // .as_slice() converts Vec<u8> to &[u8] (a slice reference)
+        // .concat() joins multiple slices into one new Vec
+        // Result: proof bytes followed by public input bytes
         let instruction_data = [proof.as_slice(), public_inputs.as_slice()].concat();
 
-        // Call the verifier program - if proof is invalid, this fails and reverts everything
+        // Why invoke() instead of CpiContext like we used for transfers?
+        // - CpiContext is Anchor's helper for calling OTHER Anchor programs
+        // - invoke() is the low-level Solana way - works with ANY program
+        // - The Sunspot verifier isn't an Anchor program, so we use invoke()
+        //
+        // invoke() takes:
+        // 1. &Instruction - what to call (program + accounts + data)
+        // 2. &[AccountInfo] - accounts the called program needs access to
         invoke(
             &Instruction {
-                program_id: ctx.accounts.verifier_program.key(),
+                program_id: ctx.accounts.verifier_program.key(),  // WHO to call
                 accounts: vec![],  // Verifier needs no accounts, just the instruction data
-                data: instruction_data,
+                data: instruction_data,  // WHAT to send (proof + public inputs)
             },
-            &[ctx.accounts.verifier_program.to_account_info()],
+            &[ctx.accounts.verifier_program.to_account_info()],  // Account infos for the runtime
         )?;
 
         // If we get here, proof was valid! Mark nullifier and transfer funds
