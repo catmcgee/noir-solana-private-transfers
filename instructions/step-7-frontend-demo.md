@@ -13,6 +13,14 @@ Implement the deposit transaction in the frontend and run the complete demo.
 
 ---
 
+## Generate IDL with Codama
+
+Codama allows you to generate Typescript interfaces that automatically do serialization so you don't have to worry about that in your frontend. 
+
+* Go to `frontend/scripts/generate-client.ts`
+* Run `bun run scripts/generate-client.ts`
+* Look at `generated` folder
+
 ## Update the Frontend
 
 **File:** `frontend/src/components/DepositSection.tsx`
@@ -25,32 +33,22 @@ Find:
 
 ```typescript
 import { useState } from 'react'
-import { useWalletConnection, useSendTransaction } from '@solana/react-hooks'
-// Step 1: You'll use these imports for PDA computation
-// import { getProgramDerivedAddress, getBytesEncoder, getAddressEncoder } from '@solana/kit'
-import { PRIVATE_TRANSFERS_PROGRAM_ADDRESS } from '../generated'
-// Step 1: You'll use this import for encoding instruction data
-// import { getDepositInstructionDataEncoder } from '../generated'
-import { getWalletAddress } from '../utils'
-import { API_URL, LAMPORTS_PER_SOL, DEFAULT_DEPOSIT_AMOUNT } from '../constants'
-// Step 1: You'll use these imports for building the instruction
-// import { SEEDS, SYSTEM_PROGRAM_ID } from '../constants'
-import type { DepositNote, DepositApiResponse } from '../types'
+...
 ```
 
-Replace with:
-
+Add 
 ```typescript
-import { useState } from 'react'
-import { useWalletConnection, useSendTransaction } from '@solana/react-hooks'
 import { getProgramDerivedAddress, getBytesEncoder, getAddressEncoder } from '@solana/kit'
 import { getDepositInstructionDataEncoder, PRIVATE_TRANSFERS_PROGRAM_ADDRESS } from '../generated'
-import { getWalletAddress } from '../utils'
-import { API_URL, LAMPORTS_PER_SOL, SEEDS, SYSTEM_PROGRAM_ID, DEFAULT_DEPOSIT_AMOUNT } from '../constants'
-import type { DepositNote, DepositApiResponse } from '../types'
+import { SEEDS, SYSTEM_PROGRAM_ID } from '../constants'
 ```
 
 ---
+
+## Add consts
+in frontend/constants.ts
+
+Set SUNSPOT_VERIFIER_ID to the program ID
 
 ### 2. Implement the deposit transaction
 
@@ -85,6 +83,7 @@ Replace with:
 
       // === Compute PDAs ===
       // Pool PDA - seeds: [b"pool"]
+      // getBytesEncoder() returns an encoder that converts Uint8Array to the format needed for PDA seeds
       const [poolPda] = await getProgramDerivedAddress({
         programAddress,
         seeds: [getBytesEncoder().encode(SEEDS.POOL)],
@@ -142,33 +141,6 @@ Replace with:
 ```
 
 ---
-
-## Understanding the Code
-
-### PDA Seeds
-
-The `SEEDS` constant in `constants.ts` contains pre-encoded byte arrays:
-
-```typescript
-export const SEEDS = {
-  POOL: new Uint8Array([112, 111, 111, 108]),      // "pool"
-  VAULT: new Uint8Array([118, 97, 117, 108, 116]), // "vault"
-  NULLIFIERS: new Uint8Array([...]),               // "nullifiers"
-}
-```
-
-These match the seeds in your Anchor program (`seeds = [b"pool"]`).
-
-### Account Roles
-
-Solana Kit uses numeric roles for account permissions:
-
-| Role | Name | Description |
-|------|------|-------------|
-| 0 | READONLY | Can read but not modify |
-| 1 | WRITABLE | Can read and modify |
-| 2 | READONLY_SIGNER | Readonly but must sign |
-| 3 | WRITABLE_SIGNER | Writable and must sign |
 
 ### Generated Encoders
 
