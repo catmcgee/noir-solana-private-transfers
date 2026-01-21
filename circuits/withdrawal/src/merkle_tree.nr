@@ -1,3 +1,6 @@
+// Merkle tree utilities for proving membership.
+// A Merkle proof shows a leaf exists in a tree by providing sibling hashes
+// from the leaf up to the root. We rehash at each level and check we get the expected root.
 use dep::poseidon;
 
 /// Computes the Merkle root from a leaf and its proof
@@ -9,6 +12,8 @@ use dep::poseidon;
 ///
 /// # Returns
 /// The computed Merkle root
+// `<let DEPTH: u32>` is a Noir generic - the caller specifies DEPTH at compile time.
+// This lets us reuse this function for trees of any depth.
 pub fn compute_merkle_root<let DEPTH: u32>(
     leaf: Field,
     path: [Field; DEPTH],
@@ -19,8 +24,9 @@ pub fn compute_merkle_root<let DEPTH: u32>(
     for i in 0..DEPTH {
         let sibling = path[i];
 
-        // If is_even[i] is true, current is on the left (even index)
-        // Otherwise current is on the right (odd index)
+        // is_even[i] tells us which side our node is on at level i.
+        // true = left child (even index like 0,2,4), false = right child (odd index like 1,3,5).
+        // We need this to know the hash order: Poseidon(left, right) not Poseidon(right, left).
         let (left, right) = if is_even[i] {
             (current, sibling)
         } else {
