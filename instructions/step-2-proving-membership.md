@@ -2,24 +2,19 @@
 
 ## Goal
 
-Add Merkle tree root tracking so we can efficiently prove a commitment exists in the pool.
-
----
-
-## What You'll Change
-
-| Component | Change |
-|-----------|--------|
-| Pool struct | Add `next_leaf_index`, `current_root_index`, `roots` array |
-| deposit() | Add `new_root` parameter, store in ring buffer |
-| withdraw() | Add `root` parameter, validate against history |
-| DepositEvent | Add `leaf_index`, `new_root` |
+Change our pool to hold a Merkle Tree root. We dont need to store the whole merkle tree - this can be maintained offchain. It's the reason that we emit deposit events with the commitment, so indexers can keep a full Merkle Tree. So we only need to keep track of where we are in the tree and what the Merkle root is.
 
 ---
 
 ## Update the Program
 
 **File:** `anchor/programs/private_transfers/src/lib.rs`
+
+---
+
+## Part 1: Define the Tree Structure
+
+First, we need constants that define our Merkle tree's properties.
 
 ### 1. Add constants at the top
 
@@ -32,24 +27,32 @@ Find:
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 ```
 
-Replace with:
-
 ```rust
 pub const TREE_DEPTH: usize = 10;
 pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH;  // 1024
 pub const ROOT_HISTORY_SIZE: usize = 10;
 
-pub const EMPTY_ROOT: [u8; 32] = [
-    0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35,
-    0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
-    0xe2, 0x45, 0x42, 0xff, 0xb9, 0xe7, 0xb2, 0x93,
-    0xdf, 0xce, 0x30, 0x42, 0xeb, 0x10, 0x46, 0x86,
-];
-
+// uncomment empty root and explain 
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000;
 ```
 
+**What these constants mean:**
+
+- **`TREE_DEPTH`**: Our Merkle tree has 10 levels. Each level doubles the number of possible leaves, so a depth of 10 gives us 2^10 = 1024 leaf positions for commitments.
+
+- **`MAX_LEAVES`**: The maximum number of deposits our pool can hold. `1 << 10` is a bit-shift that computes 2^10 = 1024. Once the tree is full, no more deposits can be made.
+
+- **`ROOT_HISTORY_SIZE`**: We store the last 10 Merkle roots in a ring buffer. Why? When someone deposits, the root changes. If we only stored the current root, a user who generated a proof against the old root would have their withdrawal fail. By keeping a history of recent roots, we give users a window of time to submit their withdrawal before their proof becomes invalid.
+
+- **`EMPTY_ROOT`**: This is the Merkle root of a tree with no leaves - all positions filled with zeros, hashed up to the root. We precompute this value because we need to initialize the pool with a valid starting root. This specific 32-byte value is the Poseidon hash result for an empty tree of depth 10.
+
+they are hashed zeros, this is what a poseidon hash looks like - a 32 byte root
+
 ---
+
+## Part 2: Store Tree State On-Chain
+
+Now we update the Pool struct to track where we are in the tree and store recent roots.
 
 ### 2. Update Pool struct
 
@@ -76,23 +79,23 @@ Replace with:
 pub struct Pool {
     pub authority: Pubkey,
     pub total_deposits: u64,
+    // Position in the tree where the next commitment will be inserted (0, 1, 2, ...)
+    // A Merkle tree is append-only - new commitments are added at the next available leaf position, never overwriting existing ones. We need `next_leaf_index` to know exactly where to place each new deposit (leaf 0, then leaf 1, then leaf 2...).
     pub next_leaf_index: u64,
+    // Points to the most recent root in the ring buffer, which of the 10 storage slots contains the most recent root
     pub current_root_index: u64,
-    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE],
+    // Ring buffer storing the last 10 Merkle roots
+    pub roots: [[u8; 32]; ROOT_HISTORY_SIZE], // array of 10 poseidon hashes
 }
 
-impl Pool {
-    pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
-        self.roots.iter().any(|r| r == root)
-    }
-}
+
 
 // Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
 ```
 
----
-
 ### 3. Initialize Pool fields
+
+When the pool is created, we set up the initial tree state.
 
 Find:
 
@@ -118,6 +121,16 @@ Replace with:
 
 ---
 
+ We've set up the on-chain storage for our Merkle tree - the Pool now tracks the next leaf position and stores recent roots. But the deposit and withdraw functions don't use any of this yet. Next, we'll update them:
+
+
+## Part 3: Update Deposit to Track Leaves and Roots
+
+Each deposit needs to:
+1. Accept the new Merkle root (computed offchain after inserting the commitment)
+2. Store that root in our history
+3. Emit the leaf index so clients can build Merkle proofs, technically we dont need this if we emit every deposit event with the commitment. but its good practice. makes it easier to look up specific commitments or handle faults if you miss a deposit
+
 ### 4. Update deposit function signature
 
 Find:
@@ -136,14 +149,102 @@ Replace with:
     pub fn deposit(
         ctx: Context<Deposit>,
         commitment: [u8; 32],
+        // The Merkle tree is maintained off-chain by the client.
+        // After inserting the commitment as a leaf, the client computes
+        // the new root and passes it here. The program just stores it.
         new_root: [u8; 32],
         amount: u64,
     ) -> Result<()> {
 ```
 
----
+### 5. Update root history after transfer
 
-### 5. Add tree full check
+After the SOL transfer succeeds, we update the tree state and emit an event.
+
+Find:
+
+```rust
+        system_program::transfer(cpi_context, amount)?;
+
+        // Step 2: Save leaf_index, update root history
+
+        emit!(DepositEvent {
+            commitment,
+            amount,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        pool.total_deposits += 1;
+        // Step 2: Increment next_leaf_index
+
+        msg!("Deposit: {} lamports, commitment: {:?}", amount);
+```
+
+Replace with:
+
+```rust
+        system_program::transfer(cpi_context, amount)?;
+
+        // Save which leaf position this commitment was inserted at
+        let leaf_index = pool.next_leaf_index;
+        
+        // Calculate next position in ring buffer using modulo to wrap around.
+        // The modulo (%) makes it wrap:
+        //  % 10 just means 'divide by 10 and give me the remainder.' When your counter hits 10, the remainder is 0 - back to the start
+        // means we can use fixed storage instead of growing forever. Oldest root gets overwritten.
+     
+        let new_root_index = ((pool.current_root_index + 1) % ROOT_HISTORY_SIZE as u64) as usize;
+        
+        // Store the new Merkle root at this position (overwrites oldest root)
+        pool.roots[new_root_index] = new_root;
+        
+        // Update pointer to track which slot has the current root
+        pool.current_root_index = new_root_index as u64;
+
+        emit!(DepositEvent {
+            commitment,
+            leaf_index,      // So client can track where in tree this commitment lives
+            timestamp: Clock::get()?.unix_timestamp,
+            new_root,        // So clients can update their local tree copy
+        });
+
+        // Move to next leaf position for the next deposit
+        pool.next_leaf_index += 1;
+        pool.total_deposits += 1;
+
+        msg!("Deposit: {} lamports at leaf index {}", amount, leaf_index);
+
+        
+```
+### 7. Update DepositEvent
+
+The event now includes the tree position and new root.
+
+Find:
+
+```rust
+#[event]
+pub struct DepositEvent {
+    pub commitment: [u8; 32],
+    pub amount: u64,
+    pub timestamp: i64,
+}
+```
+
+Replace with:
+
+```rust
+#[event]
+pub struct DepositEvent {
+    pub commitment: [u8; 32],
+    pub leaf_index: u64,
+    pub timestamp: i64,
+    pub new_root: [u8; 32],
+}
+```
+### 6. Add tree full check
+
+We can't accept more deposits once all 1024 leaf positions are used.
 
 Find:
 
@@ -172,81 +273,35 @@ Replace with:
 
         let cpi_context = CpiContext::new(
 ```
-
----
-
-### 6. Update root history after transfer
+Error it
 
 Find:
 
 ```rust
-        system_program::transfer(cpi_context, amount)?;
-
-        // Step 2: Save leaf_index, update root history
-
-        emit!(DepositEvent {
-            commitment,
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-        });
-
-        pool.total_deposits += 1;
-        // Step 2: Increment next_leaf_index
-
-        msg!("Deposit: {} lamports, commitment: {:?}", amount, commitment);
+    #[msg("Deposit amount too small")]
+    DepositTooSmall,
 ```
 
-Replace with:
+Add after it:
 
 ```rust
-        system_program::transfer(cpi_context, amount)?;
-
-        let leaf_index = pool.next_leaf_index;
-        let new_root_index = ((pool.current_root_index + 1) % ROOT_HISTORY_SIZE as u64) as usize;
-        pool.roots[new_root_index] = new_root;
-        pool.current_root_index = new_root_index as u64;
-
-        emit!(DepositEvent {
-            commitment,
-            leaf_index,
-            timestamp: Clock::get()?.unix_timestamp,
-            new_root,
-        });
-
-        pool.next_leaf_index += 1;
-        pool.total_deposits += 1;
-
-        msg!("Deposit: {} lamports at leaf index {}", amount, leaf_index);
+    #[msg("Merkle tree is full")]
+    TreeFull,
 ```
 
 ---
 
-### 7. Update DepositEvent
-
-Find:
-
-```rust
-#[event]
-pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub amount: u64,
-    pub timestamp: i64,
-}
-```
-
-Replace with:
-
-```rust
-#[event]
-pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub timestamp: i64,
-    pub new_root: [u8; 32],
-}
-```
+**Deposit recap:** We've updated `deposit` to:
+- Accept a `new_root` from the client,
+- Store that root in our ring buffer (overwriting the oldest if full)
+- Emit the `leaf_index` so clients know where the commitment lives in the tree
+- Check the tree isn't full before accepting new deposits
 
 ---
+
+## Part 4: Update Withdraw to Validate Roots
+
+Withdrawals must prove the commitment exists in the tree. For now, we just validate that the provided root is one we've seen before. (The actual ZK proof verification comes in Step 5.)
 
 ### 8. Update withdraw function signature
 
@@ -276,9 +331,9 @@ Replace with:
     ) -> Result<()> {
 ```
 
----
-
 ### 9. Add root validation in withdraw
+
+Reject withdrawals if the root isn't in our recent history.
 
 Find:
 
@@ -306,9 +361,24 @@ Replace with:
             ctx.accounts.recipient.key() == recipient,
 ```
 
----
+Add this after `pub struct Pool { ... }`:
 
-### 10. Add error codes
+```rust
+impl Pool {
+    // Check if a root exists in our history - used during withdrawal
+    // to verify the user's proof was made against a valid recent root
+    pub fn is_known_root(&self, root: &[u8; 32]) -> bool {
+        self.roots.iter().any(|r| r == root)
+    }
+}
+```
+
+In Rust, `struct` defines what data a type holds, and `impl` defines what methods (functions) it has.
+
+- `&self` - takes a reference to the Pool instance (like `this` in other languages)
+- `root: &[u8; 32]` - parameter `root` is a reference (`&`) to a 32-byte array
+- `self.roots.iter()` - iterate over the roots array
+- `.any(|r| r == root)` - check if any element matches. for each element `|r|` check that  `r` and checks  equals `root`
 
 Find:
 
@@ -325,6 +395,8 @@ Add after it:
     #[msg("Unknown Merkle root")]
     InvalidRoot,
 ```
+---
+
 
 ---
 

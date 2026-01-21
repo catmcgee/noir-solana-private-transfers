@@ -6,16 +6,12 @@ Update the deposit function to accept a commitment instead of storing the deposi
 
 ---
 
-## What You'll Change
-
-| Before | After |
-|--------|-------|
-| `deposit(amount)` | `deposit(commitment, amount)` |
-| DepositEvent stores `depositor` | DepositEvent stores `commitment` |
-
----
-
 ## Update the Program
+
+## Main thing we need to do
+
+Change the depositor struct to remove account and store commitment
+Remove mentions to account in deposit event
 
 **File:** `anchor/programs/private_transfers/src/lib.rs`
 
@@ -37,12 +33,10 @@ Replace with:
 ```rust
     pub fn deposit(
         ctx: Context<Deposit>,
-        commitment: [u8; 32],
+        commitment: [u8; 32], // poseidon2 outputs a 256-bit (32-byte) hash.
         amount: u64,
     ) -> Result<()> {
 ```
-
-**Why `[u8; 32]`?** Poseidon2 outputs a 256-bit (32-byte) hash.
 
 ---
 
@@ -108,7 +102,7 @@ Find:
 Replace with:
 
 ```rust
-        msg!("Deposit: {} lamports, commitment: {:?}", amount, commitment);
+        msg!("Deposit: {} lamports, commitment: {:?}", amount);
 ```
 
 ---

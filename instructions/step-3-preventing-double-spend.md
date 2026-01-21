@@ -5,21 +5,17 @@
 Add nullifier tracking to prevent the same deposit from being withdrawn twice.
 
 ---
-
-## What You'll Change
-
-| Component | Change |
-|-----------|--------|
-| NullifierSet struct | New account to store used nullifiers |
-| Initialize | Create nullifier_set PDA |
-| withdraw() | Add `nullifier_hash` parameter, check and mark used |
-| WithdrawEvent | Add `nullifier_hash`, remove `amount` |
-
----
-
 ## Update the Program
 
 **File:** `anchor/programs/private_transfers/src/lib.rs`
+
+---
+
+## Part 1: Create the NullifierSet
+
+A nullifier is a unique value derived from a deposit's secret. When you withdraw, you reveal the nullifier (but not the secret). The contract records it, so if you try to withdraw again with the same nullifier, it gets rejected.
+
+The key insight: each deposit produces exactly one nullifier, and the nullifier can't be linked back to the commitment. So we know "this deposit was spent" without knowing "which deposit was spent."
 
 ### 1. Add NullifierSet struct
 
@@ -44,31 +40,48 @@ impl Pool {
     }
 }
 
-#[account]
-#[derive(InitSpace)]
+#[account]  // Anchor macro - marks this struct as a Solana account that can be stored on-chain
+#[derive(InitSpace)]  // Anchor macro - auto-calculates how many bytes this struct needs for rent
 pub struct NullifierSet {
+    // The pool this nullifier set belongs to
     pub pool: Pubkey,
-    #[max_len(256)]
-    pub nullifiers: Vec<[u8; 32]>,
+    // List of all nullifiers that have been used (max 256 for this demo)
+    #[max_len(256)]  // Anchor macro - tells Anchor the max size of the Vec for space calculation
+    pub nullifiers: Vec<[u8; 32]>,  // Vec = dynamic array that can grow. This is a list of 32-byte hashes
 }
 
+// Usually in production youd use another Merkle Tree for nullifiers
+
 impl NullifierSet {
+    // Check if this nullifier was already used (i.e., deposit already withdrawn)
     pub fn is_nullifier_used(&self, nullifier_hash: &[u8; 32]) -> bool {
         self.nullifiers.contains(nullifier_hash)
     }
 
+    // Record a nullifier as used - called after successful withdrawal
     pub fn mark_nullifier_used(&mut self, nullifier_hash: [u8; 32]) -> Result<()> {
-        require!(
+        require!( // AFTER
             self.nullifiers.len() < 256,
             PrivateTransfersError::NullifierSetFull
         );
-        self.nullifiers.push(nullifier_hash);
+        self.nullifiers.push(nullifier_hash); // BEFORE
         Ok(())
     }
 }
 ```
 
+add error
+```rust
+  
+    #[msg("Nullifier set is full")]
+    NullifierSetFull,
+```
+
 ---
+
+## Part 2: Set Up NullifierSet During Initialization
+
+We need to create the NullifierSet account when the pool is initialized, and link it to the pool.
 
 ### 2. Add NullifierSet to Initialize accounts
 
@@ -88,20 +101,19 @@ Replace with:
 ```rust
     pub pool: Account<'info, Pool>,
 
-    #[account(
+    // PDA that stores all used nullifiers for this pool
+    #[account( // THIS IS NEW
         init,
         payer = authority,
         space = 8 + NullifierSet::INIT_SPACE,
         seeds = [b"nullifiers", pool.key().as_ref()],
         bump
     )]
-    pub nullifier_set: Account<'info, NullifierSet>,
+    pub nullifier_set: Account<'info, NullifierSet>, // THIS IS NEW
 
     #[account(seeds = [b"vault", pool.key().as_ref()], bump)]
     pub pool_vault: SystemAccount<'info>,
 ```
-
----
 
 ### 3. Initialize nullifier_set in initialize function
 
@@ -119,6 +131,7 @@ Replace with:
 ```rust
         pool.roots[0] = EMPTY_ROOT;
 
+        // Link the nullifier set to this pool
         let nullifier_set = &mut ctx.accounts.nullifier_set;
         nullifier_set.pool = pool.key();
 
@@ -126,6 +139,17 @@ Replace with:
 ```
 
 ---
+
+Now we have a `NullifierSet` struct to store used nullifiers, and we initialize it when the pool is created. The nullifier set is linked to the pool via a PDA (Program Derived Address). Now we need to actually use it
+
+---
+
+## Part 3: Update Withdraw to Check and Mark Nullifiers
+
+The withdrawal flow now needs to:
+1. Accept a nullifier_hash from the user
+2. Check it hasn't been used before
+3. Mark it as used before transferring funds (prevents reentrancy)
 
 ### 4. Add NullifierSet to Withdraw accounts
 
@@ -139,32 +163,22 @@ pub struct Withdraw<'info> {
 
     // Step 3: Add nullifier_set account here
 
-    #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
-    pub pool_vault: SystemAccount<'info>,
+  
 ```
 
-Replace with:
-
+Add
 ```rust
-#[derive(Accounts)]
-pub struct Withdraw<'info> {
-    #[account(mut, seeds = [b"pool"], bump)]
-    pub pool: Account<'info, Pool>,
-
+    // Must be mutable so we can add the nullifier after withdrawal
     #[account(
-        mut,
-        seeds = [b"nullifiers", pool.key().as_ref()],
-        bump
+        mut,  // we're modifying this account (adding a nullifier), so it must be mutable
+        seeds = [b"nullifiers", pool.key().as_ref()],  // PDA seeds - derives address from "nullifiers" 
+        bump  // uses the bump seed found during PDA derivation (Anchor finds it automatically)
     )]
-    pub nullifier_set: Account<'info, NullifierSet>,
+    pub nullifier_set: Account<'info, NullifierSet>, // solana account containing data in the sahpe of our NullifierSet struct, info = lifetime of transaction
 
-    #[account(mut, seeds = [b"vault", pool.key().as_ref()], bump)]
-    pub pool_vault: SystemAccount<'info>,
 ```
 
----
-
-### 5. Update withdraw function signature
+### 5. Update withdraw function signature and add nullifier check
 
 Find:
 
@@ -188,26 +202,43 @@ Replace with:
 ```rust
     pub fn withdraw(
         ctx: Context<Withdraw>,
-        // Step 5: Add proof: Vec<u8>
-        nullifier_hash: [u8; 32],
+      
+        nullifier_hash: [u8; 32], // NEW
         root: [u8; 32],
         recipient: Pubkey,
         amount: u64,
     ) -> Result<()> {
-        let nullifier_set = &mut ctx.accounts.nullifier_set;
+        let nullifier_set = &mut ctx.accounts.nullifier_set; // NEW
 
-        require!(
+        // Check if this nullifier was already used (double-spend attempt)
+        require!( // NEW
             !nullifier_set.is_nullifier_used(&nullifier_hash),
             PrivateTransfersError::NullifierUsed
         );
 
         require!(
             ctx.accounts.pool.is_known_root(&root),
+            PrivateTransfersError::InvalidRoot
+        );
 ```
 
----
+Add errors
+
+
+```rust
+    #[msg("Unknown Merkle root")]
+    InvalidRoot,
+
+
+  #[msg("Nullifier has already been used")]
+    NullifierUsed,
+```
+
+
 
 ### 6. Mark nullifier as used before transfer
+
+We mark the nullifier BEFORE transferring funds. This is important for security - if we marked it after, a reentrant call could withdraw twice.
 
 Find:
 
@@ -233,12 +264,17 @@ Replace with:
 
         // Step 5: Verify ZK proof via CPI
 
+        // Mark nullifier as used BEFORE transfer to prevent reentrancy
         nullifier_set.mark_nullifier_used(nullifier_hash)?;
 
         let pool_key = ctx.accounts.pool.key();
 ```
 
 ---
+
+## Part 4: Update Events and Logging
+
+The withdrawal event should include the nullifier so clients can track which nullifiers have been used.
 
 ### 7. Update WithdrawEvent
 
@@ -259,13 +295,12 @@ Replace with:
 ```rust
 #[event]
 pub struct WithdrawEvent {
+    // The nullifier that was consumed by this withdrawal
     pub nullifier_hash: [u8; 32],
     pub recipient: Pubkey,
     pub timestamp: i64,
 }
 ```
-
----
 
 ### 8. Update emit! in withdraw
 
@@ -290,8 +325,6 @@ Replace with:
         });
 ```
 
----
-
 ### 9. Update log message
 
 Find:
@@ -303,29 +336,8 @@ Find:
 Replace with:
 
 ```rust
-        msg!("Withdrawal: {} lamports to {}", amount, recipient);
+        msg!("Withdrawal: {} lamports to {} with nullifier {:x?}", amount, recipient, nullifier_hash);
 ```
-
----
-
-### 10. Add error codes
-
-Find:
-
-```rust
-    #[msg("Unknown Merkle root")]
-    InvalidRoot,
-```
-
-Add after it:
-
-```rust
-    #[msg("Nullifier has already been used")]
-    NullifierUsed,
-    #[msg("Nullifier set is full")]
-    NullifierSetFull,
-```
-
 ---
 
 ## Build

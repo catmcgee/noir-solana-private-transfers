@@ -6,13 +6,7 @@ Create the Noir circuit that proves deposit ownership and generate the proving/v
 
 ---
 
-## What You'll Create
-
-| File | Purpose |
-|------|---------|
-| `circuit/Nargo.toml` | Noir project config |
-| `circuit/src/main.nr` | Withdrawal circuit |
-| `circuit/src/merkle_tree.nr` | Merkle proof verification |
+In this step we'll go through the circuits and explain what they mean. These will run on our backend to generate a proof, and then we can verify them on chain
 
 ---
 
@@ -20,25 +14,15 @@ Create the Noir circuit that proves deposit ownership and generate the proving/v
 
 Nargo is the Noir compiler.
 
-```bash
-# Install noirup (Noir version manager)
-curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
-
-# Source your shell or restart terminal
-source ~/.bashrc  # or ~/.zshrc
-
-# Install the version compatible with Sunspot
-noirup -v 1.0.0-beta.3
-
-# Verify
-nargo --version
-```
+noir-lang.org
 
 ---
 
 ## Look through circuit
 
 Withdrawal circuit
+
+The way Noir works is that "if this computation succeeds, we generate a proof" so generally at the end of a circuit you would do some sort of assertation suich as here where we have assert(computed+root === root)
 
 ## Test circuit
 

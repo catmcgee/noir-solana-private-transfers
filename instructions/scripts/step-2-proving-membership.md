@@ -1,8 +1,8 @@
 # Step 2: Proving Membership - Script
 
-So now we've figured out how to deposit privately, let's move onto withdrawals. The first thing we need to do is prove our commitment exists in the pool.
+So now we've figured out how to deposit privately, let's move onto withdrawals. The first thing we need to do is allow the person who is withdrawing to prove that a certain commitment exists in the pool.
 
-The naive approach would be to store all commitments onchain and check against them. But with 1000 deposits, we'd need to send 1000 hashes in every withdrawal transaction. Solana transactions cannot be over 1kb at the time of this bootcamp so this won't work. We can use something called Merkle Treees.
+The naive approach would be to store all commitments onchain and check against them. But then the user would have to send their deposit with their withdrawal transaction, instantly revealing which one it is. They could alternatively send all commitments in a transaction, but this would make a huge transaction which would be too large for Solana to handle. Instead, we can use something called Merkle Trees.
 
 ![naive_vs_merkle](../assets/naive_vs_merkle.png)
 
