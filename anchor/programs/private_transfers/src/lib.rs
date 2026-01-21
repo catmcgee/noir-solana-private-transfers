@@ -3,17 +3,12 @@ use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
 use anchor_lang::system_program;
 
-declare_id!("2QRZu5cWy8x8jEFc9nhsnrnQSMAKwNpiLpCXrMRb3oUn");
+declare_id!("HzEfEnt2E6T6gmy9VQi2d15TN5PYAy78iq7WHPF9ddHB");
 
 // Step 2: Add Merkle tree constants here
 // Step 5: Add SUNSPOT_VERIFIER_ID here
 
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
-
-pub const EMPTY_ROOT: [u8; 32] = [
-    0x2a, 0x77, 0x5e, 0xa7, 0x61, 0xd2, 0x04, 0x35, 0xb3, 0x1f, 0xa2, 0xc3, 0x3f, 0xf0, 0x76, 0x63,
-    0xe2, 0x45, 0x42, 0xff, 0xb9, 0xe7, 0xb2, 0x93, 0xdf, 0xce, 0x30, 0x42, 0xeb, 0x10, 0x46, 0x86,
-];
 
 #[program]
 pub mod private_transfers {
@@ -30,12 +25,7 @@ pub mod private_transfers {
         Ok(())
     }
 
-    pub fn deposit(
-        ctx: Context<Deposit>,
-        // Step 1: Add commitment: [u8; 32]
-        // Step 2: Add new_root: [u8; 32]
-        amount: u64,
-    ) -> Result<()> {
+    pub fn deposit(ctx: Context<Deposit>, commitment: [u8; 32], amount: u64) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
 
         require!(
@@ -56,20 +46,15 @@ pub mod private_transfers {
         // Step 2: Save leaf_index, update root history
 
         emit!(DepositEvent {
-            depositor: ctx.accounts.depositor.key(), // Step 1: Change to commitment
+            commitment,
             amount,
             timestamp: Clock::get()?.unix_timestamp,
-            // Step 2: Add leaf_index, new_root
         });
 
         pool.total_deposits += 1;
         // Step 2: Increment next_leaf_index
 
-        msg!(
-            "Public deposit: {} lamports from {}",
-            amount,
-            ctx.accounts.depositor.key()
-        );
+        msg!("Deposit: {} lamports, commitment: {:?}", amount, commitment);
         Ok(())
     }
 
@@ -192,7 +177,7 @@ pub struct Pool {
 
 #[event]
 pub struct DepositEvent {
-    pub depositor: Pubkey, // Step 1: Change to commitment: [u8; 32]
+    commitment: [u8; 32],
     pub amount: u64,
     pub timestamp: i64,
     // Step 2: Add leaf_index: u64, new_root: [u8; 32]
