@@ -4,7 +4,7 @@ import { address } from '@solana/kit'
 export const LAMPORTS_PER_SOL = 1_000_000_000n
 
 // Program IDs - Devnet deployment
-export const SUNSPOT_VERIFIER_ID = address('Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV')
+export const SUNSPOT_VERIFIER_ID = address('DCybqMyoiEjRoBsLEXyLcfxJ88sDCEYVCZ7nsKFYy6EZ')
 
 // Backend API URL - configurable via environment variable for production
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001'

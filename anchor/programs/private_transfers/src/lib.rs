@@ -3,9 +3,9 @@ use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke;
 use anchor_lang::system_program;
 
-declare_id!("9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M");
+declare_id!("Fenf6dTx3REwt6U1QBNzXC1UMva7BukRcN17n3hhShYY");
 
-pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV");
+pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("DCybqMyoiEjRoBsLEXyLcfxJ88sDCEYVCZ7nsKFYy6EZ");
 pub const TREE_DEPTH: usize = 10;
 pub const MAX_LEAVES: u64 = 1 << TREE_DEPTH;
 pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000;

@@ -24,7 +24,7 @@ const LAMPORTS_PER_SOL = 1_000_000_000n;
 const WITHDRAWAL_DIR = path.resolve(__dirname, "../../circuits/withdrawal");
 const SUNSPOT_BIN = process.env.SUNSPOT_BIN || "sunspot";
 
-const PROGRAM_ID = address("9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M");
+const PROGRAM_ID = address("Fenf6dTx3REwt6U1QBNzXC1UMva7BukRcN17n3hhShYY");
 
 const BN254_MODULUS = BigInt(
   "21888242871839275222246405745257275088548364400416034343698204186575808495617"
