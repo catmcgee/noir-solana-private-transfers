@@ -18,7 +18,17 @@ Understand how the frontend builds and sends withdraw transactions using Solana 
 
 ## Generate Client with Codama
 
-Codama generates TypeScript interfaces from your Anchor IDL. This gives you type-safe encoders that handle serialization automatically.
+### What's an IDL?
+
+IDL stands for **Interface Definition Language**. Think of it as a JSON file that describes your Solana program's API - what instructions it has, what accounts they expect, and what data types they use.
+
+When you run `anchor build`, Anchor automatically generates an IDL file (`target/idl/your_program.json`) by reading your Rust code. Any frontend or script that wants to call your program can read this IDL to understand exactly how to format their requests. You can see our IDL at `anchor/target/idl/private_transfers.json`.
+
+For example, our IDL describes the `withdraw` instruction: it needs a proof (bytes), a nullifier hash (32 bytes), a root (32 bytes), etc. Without this, you'd have to manually figure out how to serialize data correctly, which byte order to use, and what the instruction discriminator is - error-prone and tedious.
+
+### How Codama Uses the IDL
+
+Codama reads your Anchor IDL and generates TypeScript code that handles all the serialization automatically. This gives you type-safe encoders - if you forget a field or use the wrong type, TypeScript will catch it at compile time.
 
 ```bash
 cd frontend

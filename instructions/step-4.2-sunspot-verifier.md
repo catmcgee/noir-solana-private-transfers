@@ -62,7 +62,7 @@ solana program deploy circuit/target/withdrawal.so
 Program Id: Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV
 ```
 
-Save this for frontend step
+Save this for backend step
 
 ---
 

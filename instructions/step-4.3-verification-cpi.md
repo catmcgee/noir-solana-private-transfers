@@ -240,10 +240,12 @@ If `invoke` returns an error, the entire transaction reverts. This is crucial fo
 
 ## Build and Deploy
 
+Update the Anchor.toml to use the right program ID for both the private transfers and the sunspot verifier
+
 ```bash
 cd anchor
 anchor build
-anchor deploy --provider.cluster devnet
+
 ```
 
 ---
