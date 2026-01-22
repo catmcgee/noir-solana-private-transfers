@@ -8,25 +8,9 @@ Open the starter code, understand what it does now, and see exactly what we'll b
 
 ## The Project Structure
 
-```
-noir-solana-private-transfers/
-├── anchor/                          # Solana program (YOU EDIT THIS)
-│   └── programs/private_transfers/
-│       └── src/lib.rs
-├── circuits/                        # Noir ZK circuits (ALREADY COMPLETE)
-│   ├── hasher/                      # Computes commitment hash
-│   ├── merkle-hasher/               # Computes Merkle roots
-│   └── withdrawal/                  # Main withdrawal proof circuit
-├── backend/                         # Proof generation (ALREADY COMPLETE)
-│   └── src/
-│       ├── deposit.ts               # Generates secrets, commitment
-│       └── withdraw.ts              # Generates ZK proof
-└── frontend/                        # React UI (ALREADY COMPLETE)
-```
+**We'll mainly look at** `anchor/programs/private_transfers/src/lib.rs`
 
-**You'll modify:** `anchor/programs/private_transfers/src/lib.rs`
-
-**You'll read (but not modify):** The circuits in `circuits/` and backend in `backend/` and `frontend`
+**We'll also learn** The circuits in `circuits/` and backend in `backend/` and `frontend`
 
 ---
 

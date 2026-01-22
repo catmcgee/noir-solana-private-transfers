@@ -1,4 +1,6 @@
-# Step 5: Sunspot Verifier
+**~7 min**
+
+# Step 4.2: Sunspot Verifier
 
 ## Goal
 
@@ -60,7 +62,7 @@ solana program deploy circuit/target/withdrawal.so
 Program Id: Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV
 ```
 
-Save this for Step 6.
+Save this for frontend step
 
 ---
 
@@ -71,6 +73,27 @@ The verifier program:
 - Only accepts proofs from your specific circuit
 - Uses BN254 elliptic curve pairings (~1.4M compute units)
 - Is stateless - no accounts needed, just CPI
+
+---
+
+## Solana Deep Dive: Why Groth16?
+
+Not all proof systems work well on Solana. Here's why Groth16 is ideal:
+
+**Tiny proofs:** Groth16 proofs are ~256 bytes. Solana transactions max out at 1232 bytes, so small proofs are essential. STARKs can be 50-200KB - they literally don't fit in a transaction.
+
+**Fast verification:** Groth16 verification uses elliptic curve pairings - expensive math, but predictable. On Solana, it costs ~1.4M compute units. The default transaction budget is 200K CUs, but you can request up to 1.4M with `SetComputeUnitLimit`. Our verification fits.
+
+**The trade-off:** Groth16 requires a trusted setup (those `.pk` and `.vk` files we generated). If someone knew the randomness used during setup, they could forge proofs. For production, you'd use a multi-party computation ceremony where the randomness is destroyed. Sunspot handles this for development.
+
+**Why a separate verifier program?** 
+
+The verifier is ~100KB of compiled code - too big to include in your main program. By deploying it separately:
+- Multiple programs can share the same verifier
+- You can upgrade the verifier without redeploying your main program
+- The verification logic is auditable in isolation
+
+This pattern of "call external verifier via CPI" is becoming standard for ZK on Solana.
 
 ---
 

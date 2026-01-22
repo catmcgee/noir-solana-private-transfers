@@ -1,3 +1,5 @@
+**~3 min**
+
 # Step 0: Introduction 
 
 ## What We're Building
@@ -20,7 +22,7 @@ Now, before we go any further - this is an educational project. It is not recomm
 
 ---
 
-Anyway, the way this works is through zero-knowledge proofs. A zero-knowledge, or ZK, proof lets you prove something is true without revealing the underlying data - like proving you're over 18 without showing your actual birthday. In our case, you prove you made a valid deposi into the pool without revealing which one.
+Anyway, the way this works is through zero-knowledge proofs. A zero-knowledge, or ZK, proof lets you prove something is true without revealing the underlying data - like proving you're over 18 without showing your actual birthday. In our case, you prove you made a valid deposit into the pool without revealing which one.
 
 In this project, when you deposit, you'll generate random secrets on your device, hash them together, and send that hash plus your SOL to a pool on Solana. You get back a deposit note, which you need to save or give to whoever needs to withdraw.
 
@@ -30,4 +32,4 @@ Then when someone wants to withdraw from the pool, they use their deposit note t
 
 ---
 
-In this project we'll start with a public pool and turn it into a private pool in 6 steps. All the code used here is linked in the description. Feel free to clone the repo and follow along! By the end you'll understand how ZK works on Solana. Let's go!
+In this project we'll start with a public pool and turn it into a private pool in 6 steps. We'll live code all the things related to ZK so you can get a deep understanding of how it all works. All the code used here is linked in the description. Feel free to clone the repo and follow along! By the end you'll understand how ZK works on Solana. Let's go!

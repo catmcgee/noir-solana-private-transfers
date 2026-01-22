@@ -1,4 +1,6 @@
-# Step 4: The ZK Circuit
+**~5 min**
+
+# Step 4.1: The ZK Circuit
 
 ## Goal
 

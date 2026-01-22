@@ -1,4 +1,6 @@
-# Step 6: Demo - Script
+**~1 min**
+
+# Step 4.4: Demo - Script
 
 We've built all the pieces. Now let's see the complete flow and have a look at how we're calling some of these things.
 

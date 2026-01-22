@@ -1,4 +1,6 @@
-# Step 6: Verification CPI
+**~14 min**
+
+# Step 4.3: Verification CPI
 
 ## Goal
 
@@ -40,15 +42,6 @@ use anchor_lang::system_program;
 ### 2. Add verifier ID constant
 
 This is the program ID of the Sunspot verifier you deployed in Step 5. Every CPI call needs the target program's address.
-
-Find:
-
-```rust
-// Step 2: Add Merkle tree constants here
-// Step 5: Add SUNSPOT_VERIFIER_ID here
-
-pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000;
-```
 
 Replace with (use YOUR verifier ID from Step 5):
 
@@ -153,15 +146,6 @@ The withdraw instruction needs access to the verifier program so it can call it 
 
 ### 4. Add verifier to Withdraw accounts
 
-Find:
-
-```rust
-    /// CHECK: Validated in instruction logic
-    #[account(mut)]
-    pub recipient: UncheckedAccount<'info>,
-
-}
-```
 
 Add below:
 
@@ -183,12 +167,6 @@ Add below:
 
 > Note on `#[account(mut)]` for recipient - it's marked mutable because we're transferring SOL TO it. Any account receiving lamports must be writable.
 
-Add error:
-
-```rust
-    #[msg("Invalid verifier program")]
-    InvalidVerifier,
-```
 
 Now our program knows about the verifier program
 
@@ -204,14 +182,6 @@ Now we update the withdraw function to:
 
 ### 5. Update withdraw function signature
 
-Find:
-
-```rust
-    pub fn withdraw(
-    ) -> Result<()> {
-```
-
-Add
 
 ```rust
     pub fn withdraw(
@@ -228,16 +198,6 @@ This is where the magic happens. We call the verifier program with the proof and
 
 Find:
 
-```rust
-        require!(
-            ctx.accounts.pool_vault.lamports() >= amount,
-            PrivateTransfersError::InsufficientVaultBalance
-        );
-
-        // under here
-
-
-```
 
 Add:
 ```rust
@@ -271,6 +231,32 @@ Add:
         // If we get here, proof was valid! Mark nullifier and transfer funds
         nullifier_set.mark_nullifier_used(nullifier_hash)?;
 ```
+
+---
+
+## Solana Deep Dive: CPI Patterns
+
+Cross-Program Invocation (CPI) is how Solana programs talk to each other. Let's understand the patterns:
+
+**`invoke` vs `invoke_signed`:**
+- `invoke` - Call another program. The caller's authority is passed through.
+- `invoke_signed` - Same, but also sign with PDA seeds. Use this when your PDA needs to authorize something (like transferring from a PDA-owned vault).
+
+We use `invoke` here because the verifier doesn't need any signatures - it just validates math.
+
+**`invoke` vs `CpiContext`:**
+- `CpiContext` is Anchor's helper for calling other Anchor programs. It gives you type safety and automatic account validation.
+- `invoke` is raw Solana - works with any program, but you build the instruction manually.
+
+The Sunspot verifier isn't an Anchor program (it's generated Rust code), so we use `invoke`. Earlier, when we transferred SOL, we used `CpiContext` because the System Program has Anchor bindings.
+
+**Why the verifier needs no accounts:**
+
+Most CPIs pass accounts - the called program needs to read/write data. But our verifier is purely computational: it takes proof bytes + public inputs, does elliptic curve math, and either succeeds or fails. No state to read, nothing to write. This makes it cheap and simple.
+
+**Atomic failure:**
+
+If `invoke` returns an error, the entire transaction reverts. This is crucial for security - we can't have a situation where verification fails but funds still transfer. The `?` after `invoke(...)` propagates the error, causing the transaction to fail if verification fails.
 
 ---
 

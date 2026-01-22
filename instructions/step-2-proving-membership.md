@@ -1,3 +1,5 @@
+**~8 min**
+
 # Step 2: Proving Membership
 
 ## Goal
@@ -17,15 +19,6 @@ Change our pool to hold a Merkle Tree root. We dont need to store the whole merk
 First, we need constants that define our Merkle tree's properties.
 
 ### 1. Add constants at the top
-
-Find:
-
-```rust
-// Step 2: Add Merkle tree constants here
-// Step 5: Add SUNSPOT_VERIFIER_ID here
-
-pub const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
-```
 
 ```rust
 pub const TREE_DEPTH: usize = 10;
@@ -58,19 +51,6 @@ Now we update the Pool struct to track where we are in the tree and store recent
 
 Find:
 
-```rust
-#[account]
-#[derive(InitSpace)]
-pub struct Pool {
-    pub authority: Pubkey,
-    pub total_deposits: u64,
-    // Step 2: Add next_leaf_index, current_root_index, roots
-}
-
-// Step 2: Add is_known_root method to Pool
-// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
-```
-
 Replace with:
 
 ```rust
@@ -89,23 +69,11 @@ pub struct Pool {
 }
 
 
-
-// Step 3: Add NullifierSet struct with is_nullifier_used and mark_nullifier_used methods
 ```
 
 ### 3. Initialize Pool fields
 
 When the pool is created, we set up the initial tree state.
-
-Find:
-
-```rust
-        pool.total_deposits = 0;
-        // Step 2: Initialize next_leaf_index, current_root_index, roots[0]
-        // Step 3: Initialize nullifier_set.pool
-
-        msg!("Pool initialized");
-```
 
 Replace with:
 
@@ -133,15 +101,6 @@ Each deposit needs to:
 
 ### 4. Update deposit function signature
 
-Find:
-
-```rust
-    pub fn deposit(
-        ctx: Context<Deposit>,
-        commitment: [u8; 32],
-        amount: u64,
-    ) -> Result<()> {
-```
 
 Replace with:
 
@@ -161,24 +120,6 @@ Replace with:
 
 After the SOL transfer succeeds, we update the tree state and emit an event.
 
-Find:
-
-```rust
-        system_program::transfer(cpi_context, amount)?;
-
-        // Step 2: Save leaf_index, update root history
-
-        emit!(DepositEvent {
-            commitment,
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-        });
-
-        pool.total_deposits += 1;
-        // Step 2: Increment next_leaf_index
-
-        msg!("Deposit: {} lamports, commitment: {:?}", amount);
-```
 
 Replace with:
 
@@ -220,17 +161,6 @@ Replace with:
 
 The event now includes the tree position and new root.
 
-Find:
-
-```rust
-#[event]
-pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub amount: u64,
-    pub timestamp: i64,
-}
-```
-
 Replace with:
 
 ```rust
@@ -246,17 +176,6 @@ pub struct DepositEvent {
 
 We can't accept more deposits once all 1024 leaf positions are used.
 
-Find:
-
-```rust
-        require!(
-            amount >= MIN_DEPOSIT_AMOUNT,
-            PrivateTransfersError::DepositTooSmall
-        );
-        // Step 2: Add tree full check
-
-        let cpi_context = CpiContext::new(
-```
 
 Replace with:
 
@@ -273,23 +192,7 @@ Replace with:
 
         let cpi_context = CpiContext::new(
 ```
-Error it
 
-Find:
-
-```rust
-    #[msg("Deposit amount too small")]
-    DepositTooSmall,
-```
-
-Add after it:
-
-```rust
-    #[msg("Merkle tree is full")]
-    TreeFull,
-```
-
----
 
 **Deposit recap:** We've updated `deposit` to:
 - Accept a `new_root` from the client,
@@ -304,19 +207,6 @@ Add after it:
 Withdrawals must prove the commitment exists in the tree. For now, we just validate that the provided root is one we've seen before. (The actual ZK proof verification comes in Step 5.)
 
 ### 8. Update withdraw function signature
-
-Find:
-
-```rust
-    pub fn withdraw(
-        ctx: Context<Withdraw>,
-        // Step 5: Add proof: Vec<u8>
-        // Step 3: Add nullifier_hash: [u8; 32]
-        // Step 2: Add root: [u8; 32]
-        recipient: Pubkey,
-        amount: u64,
-    ) -> Result<()> {
-```
 
 Replace with:
 
@@ -335,17 +225,6 @@ Replace with:
 
 Reject withdrawals if the root isn't in our recent history.
 
-Find:
-
-```rust
-    ) -> Result<()> {
-        // Step 3: Check nullifier not used
-        // Step 2: Validate root is known
-
-        require!(
-            ctx.accounts.recipient.key() == recipient,
-```
-
 Replace with:
 
 ```rust
@@ -357,8 +236,7 @@ Replace with:
             PrivateTransfersError::InvalidRoot
         );
 
-        require!(
-            ctx.accounts.recipient.key() == recipient,
+    
 ```
 
 Add this after `pub struct Pool { ... }`:

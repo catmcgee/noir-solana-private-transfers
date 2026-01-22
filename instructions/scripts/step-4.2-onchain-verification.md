@@ -1,4 +1,6 @@
-# Step 5: On-chain Verification - Script
+**~1.5 min**
+
+# Step 4.3: On-chain Verification - Script
 
 
 We have our ZK proof. Now we verify it on Solana. This is the final piece in the puzzle of zero knowledge proofs. 

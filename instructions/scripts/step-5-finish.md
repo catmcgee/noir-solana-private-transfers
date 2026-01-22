@@ -1,4 +1,6 @@
-# Step 7: Finished! - Script
+**~1 min**
+
+# Step 5: Finished! - Script
 
 And there you have it - you've built a privacy-preserving transfer system on Solana using zero-knowledge proofs!
 

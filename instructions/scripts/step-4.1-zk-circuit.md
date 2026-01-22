@@ -1,4 +1,6 @@
-# Step 4: The ZK Circuit - Script
+**~3 min**
+
+# Step 4.1: The ZK Circuit - Script
 
 Now we're onto the fun part - zero knowledge proofs! We can deposit privately, prove membership and prevent double-spending. But right now if we just send a Merkle proof we will be revealing which commitment is ours!
 

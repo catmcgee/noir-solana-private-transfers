@@ -10,11 +10,12 @@ Right now, our deposit event logs the depositor's address and amount. Instead, w
 
 A commitment is just a hash. In the ZK world, we call it a commitment because you're "committing" to certain values without revealing them.
 
-Think of it like a sealed envelope - everyone can see the envelope exists, but no one can see what's inside. Only you know. In our program, we will store a commitment each time someoen deposits, and it will be a hash of their nullifier, a secret, and their amount.
+Think of it like a sealed envelope - everyone can see the envelope exists, but no one can see what's inside. Only you know. In our program, we will store a commitment each time someone deposits, and it will be a hash of their nullifier, a secret, and their amount.
 
 The nullifier and secret are random numbers that only the depositer knows and will be used in order to withdraw. We'll get to what nullifier means later.
 
 ![posiedon_hash](../assets/posiedon_hash.png)
+
 
 ---
 When you deposit, you save your nullifier, secret, and amount locally. This is your deposit note - your receipt.

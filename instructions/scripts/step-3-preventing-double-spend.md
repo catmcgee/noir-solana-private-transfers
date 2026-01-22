@@ -1,3 +1,5 @@
+**~2 min**
+
 # Step 3: Preventing Double-Spend - Script
 
 So we can deposit into the pool without storing us as the depositor, then prove a commitment exists in order to withdraw. But what stops someone from proving the same deposit multiple times? Nothing yet!
