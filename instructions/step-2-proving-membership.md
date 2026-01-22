@@ -156,21 +156,7 @@ Replace with:
         msg!("Deposit: {} lamports at leaf index {}", amount, leaf_index);
 
         
-```
-### 7. Update DepositEvent
 
-The event now includes the tree position and new root.
-
-Replace with:
-
-```rust
-#[event]
-pub struct DepositEvent {
-    pub commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub timestamp: i64,
-    pub new_root: [u8; 32],
-}
 ```
 ### 6. Add tree full check
 
@@ -204,7 +190,7 @@ Replace with:
 
 ## Part 4: Update Withdraw to Validate Roots
 
-Withdrawals must prove the commitment exists in the tree. For now, we just validate that the provided root is one we've seen before. (The actual ZK proof verification comes in Step 5.)
+Withdrawals must prove the commitment exists in the tree. Before, we just validate that the provided root is one we've seen before. (The actual ZK proof verification comes in Step 5.)
 
 ### 8. Update withdraw function signature
 
@@ -220,6 +206,17 @@ Replace with:
         amount: u64,
     ) -> Result<()> {
 ```
+
+### How Users Calculate Their Root
+
+**The client maintains their own copy of the Merkle tree:**
+
+1. **Index deposit events** - The client listens to `DepositEvent` emissions. Each event contains `commitment`, `leaf_index`, and `new_root`. By replaying all events, the client rebuilds the full tree locally.
+
+2. **Compute the current root** - With the full tree in memory, the client hashes up from their commitment's leaf position to get the current root.
+
+3. **Generate a Merkle proof** - The proof is the list of sibling hashes needed to recompute the root from their leaf. For a depth-10 tree, this is 10 hashes.
+
 
 ### 9. Add root validation in withdraw
 
@@ -251,29 +248,14 @@ impl Pool {
 }
 ```
 
+
+
 In Rust, `struct` defines what data a type holds, and `impl` defines what methods (functions) it has.
 
 - `&self` - takes a reference to the Pool instance (like `this` in other languages)
 - `root: &[u8; 32]` - parameter `root` is a reference (`&`) to a 32-byte array
 - `self.roots.iter()` - iterate over the roots array
 - `.any(|r| r == root)` - check if any element matches. for each element `|r|` check that  `r` and checks  equals `root`
-
-Find:
-
-```rust
-    #[msg("Deposit amount too small")]
-    DepositTooSmall,
-```
-
-Add after it:
-
-```rust
-    #[msg("Merkle tree is full")]
-    TreeFull,
-    #[msg("Unknown Merkle root")]
-    InvalidRoot,
-```
----
 
 
 ---
@@ -297,6 +279,6 @@ anchor build
 
 ## Next Step
 
-We can prove a commitment exists. But what stops double-spending? Nothing yet.
+We can prove a commitment exists. But you might have noticed that if we emit every single commitment publicly, then everyone can just create their own Merkle root, and therefore be able to withdraw. In the next step we're going to talk about nullifiers which accomplish two things - proving we are the owner of a commitment, and proving that it hasn't been withdrawn already.
 
 Continue to [Step 3: Preventing Double-Spend](./step-3-preventing-double-spend.md).

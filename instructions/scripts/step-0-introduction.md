@@ -32,4 +32,4 @@ Then when someone wants to withdraw from the pool, they use their deposit note t
 
 ---
 
-In this project we'll start with a public pool and turn it into a private pool in 6 steps. We'll live code all the things related to ZK so you can get a deep understanding of how it all works. All the code used here is linked in the description. Feel free to clone the repo and follow along! By the end you'll understand how ZK works on Solana. Let's go!
+In this project we'll start with a public pool and turn it into a private pool in 6 steps. We'll go through step-by-step so you can get a deep understanding of how it all works. All the code used here is linked in the description. Feel free to clone the repo and follow along! By the end you'll understand how ZK works on Solana. Let's go!

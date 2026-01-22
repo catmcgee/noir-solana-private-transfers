@@ -4,7 +4,7 @@
 
 ## Goal
 
-Add nullifier tracking to prevent the same deposit from being withdrawn twice.
+Add nullifier tracking to prove ownership of a speific commitment and prevent the same deposit from being withdrawn twice.
 
 ---
 ## Update the Program
@@ -13,15 +13,12 @@ Add nullifier tracking to prevent the same deposit from being withdrawn twice.
 
 ---
 
-## Part 1: Create the NullifierSet
+A nullifier is a unique value derived from a deposit's secret. When you withdraw, you reveal the nullifier (but not the secret). The program records it, so if you try to withdraw again with the same nullifier, it gets rejected.
 
-A nullifier is a unique value derived from a deposit's secret. When you withdraw, you reveal the nullifier (but not the secret). The contract records it, so if you try to withdraw again with the same nullifier, it gets rejected.
-
-The key insight: each deposit produces exactly one nullifier, and the nullifier can't be linked back to the commitment. So we know "this deposit was spent" without knowing "which deposit was spent."
+Each deposit produces exactly one nullifier, and the nullifier can't be linked back to the commitment. So we know "this deposit was spent" without knowing "which deposit was spent."
 
 ### 1. Add NullifierSet struct
-
-Find:
+:
 
 Replace with:
 
@@ -56,8 +53,17 @@ impl NullifierSet {
     }
 }
 ```
+## Solana Deep Dive: Why a Separate Account?
 
+You might wonder - why not just add a `nullifiers` field to the Pool struct? A few reasons:
 
+**Account size limits:** Solana accounts can grow up to 10MB, but you pay rent proportional to size (~6.9 SOL/MB/year). Our NullifierSet with 256 nullifiers is about 8KB. If we needed thousands of nullifiers, we'd want to keep it separate so we could reallocate space independently.
+
+**Separation of concerns:** The Pool tracks tree state (roots, leaf index). The NullifierSet tracks spent deposits. Different data, different access patterns. In production, you might even use a Merkle tree for nullifiers (like Light Protocol does) to support unlimited nullifiers with constant on-chain storage.
+
+**Upgrade flexibility:** If you wanted to change how nullifiers are stored (say, switch to a Merkle tree), you could deploy a new NullifierSet implementation without touching the Pool.
+
+---
 ---
 
 ## Part 2: Set Up NullifierSet During Initialization
@@ -109,17 +115,6 @@ Now we have a `NullifierSet` struct to store used nullifiers, and we initialize 
 
 ---
 
-## Solana Deep Dive: Why a Separate Account?
-
-You might wonder - why not just add a `nullifiers` field to the Pool struct? A few reasons:
-
-**Account size limits:** Solana accounts can grow up to 10MB, but you pay rent proportional to size (~6.9 SOL/MB/year). Our NullifierSet with 256 nullifiers is about 8KB. If we needed thousands of nullifiers, we'd want to keep it separate so we could reallocate space independently.
-
-**Separation of concerns:** The Pool tracks tree state (roots, leaf index). The NullifierSet tracks spent deposits. Different data, different access patterns. In production, you might even use a Merkle tree for nullifiers (like Light Protocol does) to support unlimited nullifiers with constant on-chain storage.
-
-**Upgrade flexibility:** If you wanted to change how nullifiers are stored (say, switch to a Merkle tree), you could deploy a new NullifierSet implementation without touching the Pool.
-
----
 
 ## Part 3: Update Withdraw to Check and Mark Nullifiers
 
@@ -177,9 +172,14 @@ Replace with:
 ### 6. Mark nullifier as used before transfer
 
 We mark the nullifier BEFORE transferring funds. This is important for security - if we marked it after, a reentrant call could withdraw twice.
+1. Attacker calls `withdraw` with valid nullifier
+2. Check passes (nullifier not used yet)
+3. Transfer starts sending funds to attacker's account
+4. Before step 3 executes, attacker's receiving program could potentially call `withdraw` again with the same nullifier
+5. The second call also passes the nullifier check (it's still not marked!)
+6. Attacker gets paid twice (or more) from a single deposit
 
-Find:
-
+By marking the nullifier as used BEFORE the transfer, any reentrant call would fail the nullifier check.
 
 Replace with:
 
@@ -201,37 +201,9 @@ Replace with:
 
 ## Part 4: Update Events and Logging
 
-The withdrawal event should include the nullifier so clients can track which nullifiers have been used.
-
-### 7. Update WithdrawEvent
-
-Find:
-
-
-Replace with:
-
-```rust
-#[event]
-pub struct WithdrawEvent {
-    // The nullifier that was consumed by this withdrawal
-    pub nullifier_hash: [u8; 32],
-    pub recipient: Pubkey,
-    pub timestamp: i64,
-}
-```
+The withdrawal event should include the nullifier so clients can track which nullifiers have been used. Useful to avoid failed transactions or track spends for someones specific wallet.
 
 ### 8. Update emit! in withdraw
-
-Find:
-
-```rust
-        emit!(WithdrawEvent {
-            recipient: ctx.accounts.recipient.key(),
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-            // Step 3: Replace amount with nullifier_hash
-        });
-```
 
 Replace with:
 

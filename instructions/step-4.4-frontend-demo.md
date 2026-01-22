@@ -40,6 +40,10 @@ In `frontend/src/constants.ts`, set your verifier program ID:
 export const SUNSPOT_VERIFIER_ID = address("YOUR_VERIFIER_PROGRAM_ID_HERE")
 ```
 
+In `backend/src/server.ts` set the private transfers program ID
+
+This is automaticaly done for us on the frotnend with codama
+
 ---
 
 ## The Withdraw Transaction
@@ -198,6 +202,13 @@ const result = await sendTransaction({
 ---
 
 ## Run and Test the Demo
+
+### Sync anchor keys
+
+```bash
+cd anchor
+anchor keys sync
+```
 
 ### 1. Start the Backend
 

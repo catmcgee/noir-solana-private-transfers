@@ -66,7 +66,7 @@ go build -o sunspot .
 sudo mv sunspot /usr/local/bin/
 
 # Verify
-sunspot --help
+sunspothelp
 ```
 
 ---

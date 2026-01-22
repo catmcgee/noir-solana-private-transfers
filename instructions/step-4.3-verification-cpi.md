@@ -15,28 +15,6 @@ Update the program to verify ZK proofs by calling the Sunspot verifier via CPI.
 
 ---
 
-## Part 1: Add Imports and Verifier ID
-
-To call another Solana program (CPI = Cross-Program Invocation), we need the `Instruction` type and `invoke` function. We also need to know the address of the verifier program we deployed in Step 5.
-
-### 1. Add imports at the top
-
-Find:
-
-```rust
-use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-```
-
-Replace with:
-
-```rust
-use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::Instruction;  // Struct to build CPI calls
-use anchor_lang::solana_program::program::invoke;           // Function to execute CPI
-use anchor_lang::system_program;
-```
-
 > `Instruction` is just a struct with: program_id, accounts, and data. `invoke` sends that instruction to another program.
 
 ### 2. Add verifier ID constant

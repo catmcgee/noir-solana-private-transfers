@@ -48,17 +48,6 @@ Replace with:
 
 ### 2. Update the DepositEvent struct
 
-Find:
-
-```rust
-pub struct DepositEvent {
-    pub depositor: Pubkey, // Step 1: Change to commitment: [u8; 32]
-    pub amount: u64,
-    pub timestamp: i64,
-    // Step 2: Add leaf_index: u64, new_root: [u8; 32]
-}
-```
-
 Replace with:
 
 ```rust
@@ -74,16 +63,6 @@ pub struct DepositEvent {
 
 ### 3. Update the emit! call
 
-Find:
-
-```rust
-        emit!(DepositEvent {
-            depositor: ctx.accounts.depositor.key(), // Step 1: Change to commitment
-            amount,
-            timestamp: Clock::get()?.unix_timestamp,
-            // Step 2: Add leaf_index, new_root
-        });
-```
 
 Replace with:
 
@@ -113,16 +92,6 @@ Replace with:
 
 ---
 
-## Build
-
-```bash
-cd anchor
-anchor build
-```
-
-If the build succeeds, your program now accepts commitments.
-
----
 
 ## How the Commitment Gets to Solana
 
@@ -146,11 +115,11 @@ const commitmentHex = "0x" + commitment.toString(16).padStart(64, "0");
 
 **Why Poseidon?** Regular hash functions like SHA-256 require millions of constraints to prove in a ZK circuit. Poseidon was designed to be "ZK-friendly" - it achieves the same security with far fewer constraints, making proofs faster and cheaper.
 
-Poseidon is becoming a standard in the Solana ecosystem. Light Protocol uses Poseidon hashes for their compressed state - not for privacy, but for scalability. They hash account data off-chain, store just the hash on-chain, and use ZK proofs to verify state transitions. Same cryptographic primitives, different use case.
+Poseidon is becoming a standard in the Solana ecosystem for more than just privacy. Light Protocol uses Poseidon hashes for their compressed state - not for privacy, but for scalability. They hash account data off-chain, store just the hash on-chain, and use ZK proofs to verify state transitions. Same cryptographic primitives, different use case.
 
 ### 2. Convert to bytes for Solana
 
-The hash is a BigInt. Solana expects a byte array:
+Scroll down to `api/deposit` when this is acutally called. Poseidon hash is a BigInt. Solana expects a byte array:
 
 ```typescript
 // Strip "0x" prefix, convert hex string to bytes

@@ -2,11 +2,11 @@
 
 # Step 3: Preventing Double-Spend - Script
 
-So we can deposit into the pool without storing us as the depositor, then prove a commitment exists in order to withdraw. But what stops someone from proving the same deposit multiple times? Nothing yet!
+So we can deposit into the pool without storing us as the depositor, then prove a commitment exists in order to withdraw. But what stops someone from proving the same deposit multiple times, or proving we know some other commitment that isn't yours? Nothing yet!
 
-That's the double-spend problem. Nullifiers fix it, so that's what we're going to do here. The problem is that we can't just mark "commitment X was spent" when we do a withdraw, because then it links commitment X with the withdrawal.
+That's where nullifiers come in, and that's what we're going to talk about in this step. The nullifier solves both problems: it proves you own a commitment (because only you know the nullifier you used when creating it), and it prevents double spending (because we can track which nullifiers have been used).
 
-We need to track "something was spent" without revealing which commitment.
+The problem is that we can't just mark "commitment X was spent" when we do a withdraw, because then it links commitment X with the withdrawal. We need to track "something was spent" without revealing which commitment.
 
 ---
 
