@@ -74,6 +74,7 @@ pub mod private_transfers {
         });
 
         pool.total_deposits += 1;
+        pool.next_leaf_index += 1;
 
         msg!("Deposit: {} lamports, commitment: {:?}", amount, commitment);
         Ok(())
