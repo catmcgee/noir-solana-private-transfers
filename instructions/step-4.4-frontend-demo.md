@@ -248,7 +248,7 @@ Before any deposits or withdrawals can happen, the pool must be initialized. Thi
 
 ```bash
 cd anchor
-anchor run initialize
+bun run init-pool
 ```
 
 > This only needs to run once per deployment. If you redeploy the program, you'll need to initialize again. The initialize instruction creates PDAs for the pool, vault, and nullifier set.

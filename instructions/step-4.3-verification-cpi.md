@@ -245,6 +245,7 @@ Update the Anchor.toml to use the right program ID for both the private transfer
 ```bash
 cd anchor
 anchor build
+anchor program deploy --provider.cluster devnet
 
 ```
 
