@@ -6,9 +6,8 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-mock_verifier = "E5PrYyzzcUptVMNkKV3fRw1bVn1Ma4zCrH4tyktnrbF5"
-private_transfers = "9T8s1qzKomXR17WgUo9mRwdNwWoQx4xjNtcMqr5pxk2M"
-sunspot_verifier = "Amugr8yL9EQVAgGwqds9gCmjzs8fh6H3wjJ3eB4pBhXV"
+private_transfers = "8g5mRSVbbZ28fXcHNTwjvA66ZpRRQLkRb6scndFTm5UG"
+sunspot_verifier = "G6ZGZt9iJqejZBdSh4EMXrYiUXkCtedrzxsjorwSm7Un"
 
 [programs.localnet]
 mock_verifier = "4T8nxeiE9c4x55cPhXbqr1rzwXvggLTZkUfDGoSb9yrJ"
