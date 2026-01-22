@@ -177,7 +177,7 @@ pub struct Pool {
 
 #[event]
 pub struct DepositEvent {
-    commitment: [u8; 32],
+    pub commitment: [u8; 32],
     pub amount: u64,
     pub timestamp: i64,
     // Step 2: Add leaf_index: u64, new_root: [u8; 32]
