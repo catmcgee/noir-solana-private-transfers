@@ -53,7 +53,7 @@ noirup -v 1.0.0-beta.13
 ```bash
 git clone https://github.com/reilabs/sunspot.git
 cd sunspot/go
-go build -o sunspot .
+go build -o sunspot ./cmd/sunspot
 sudo mv sunspot /usr/local/bin/
 ```
 
